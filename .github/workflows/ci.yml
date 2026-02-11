@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+jobs:
+  lint_typecheck:
+    name: CI / Lint + Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  tests:
+    name: CI / Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test
+
+  state_schema:
+    name: CI / Ralph State Schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: mkdir -p .ralph-team
+      - run: |
+          cat > .ralph-team/team-state.json <<JSON
+          {
+            "tickets": {},
+            "agents": {
+              "architect": {"status":"idle","current_ticket":null,"iterations":0}
+            },
+            "sprint": {
+              "status": "not_started",
+              "total_tickets": 0,
+              "completed_tickets": 0,
+              "blocked_tickets": 0,
+              "iteration": 0
+            }
+          }
+          JSON
+      - run: npm run ralph:validate-state

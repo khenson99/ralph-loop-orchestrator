@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.env
+.env.local
+.ralph-team
+.ralph-team-template-agents
+.ralph-team-template-prompts
+*.log
+.DS_Store

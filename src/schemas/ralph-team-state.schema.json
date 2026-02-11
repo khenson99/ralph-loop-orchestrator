@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ralph-loop-orchestrator/schemas/ralph-team-state.schema.json",
+  "type": "object",
+  "required": ["tickets", "agents", "sprint"],
+  "properties": {
+    "tickets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string" },
+          "agent": { "type": "string" },
+          "pr_number": { "type": ["integer", "null"] },
+          "reviewed": { "type": "boolean" },
+          "review_decision": { "type": ["string", "null"] },
+          "reviewed_at": { "type": ["string", "null"] },
+          "blocked_reason": { "type": "string" }
+        }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string" },
+          "current_ticket": { "type": ["integer", "null"] },
+          "iterations": { "type": "integer" }
+        }
+      }
+    },
+    "sprint": {
+      "type": "object",
+      "required": ["status", "total_tickets", "completed_tickets", "blocked_tickets", "iteration"],
+      "properties": {
+        "status": { "type": "string" },
+        "total_tickets": { "type": "integer" },
+        "completed_tickets": { "type": "integer" },
+        "blocked_tickets": { "type": "integer" },
+        "iteration": { "type": "integer" }
+      }
+    }
+  },
+  "additionalProperties": false
+}
