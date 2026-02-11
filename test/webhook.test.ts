@@ -24,6 +24,7 @@ const config = {
   autoMergeEnabled: true,
   requiredChecks: [],
   otelEnabled: false,
+  dryRun: true,
 };
 
 afterEach(() => {

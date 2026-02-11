@@ -30,6 +30,7 @@ Standalone orchestration service for a Ralph Team Loop workflow:
 ## Quick start
 
 1. Copy `.env.example` to `.env` and fill all secrets.
+   - For local smoke tests without model keys, set `DRY_RUN=true` and provide `GITHUB_TOKEN`.
 2. Install dependencies:
    - `npm install`
 3. Push schema:
