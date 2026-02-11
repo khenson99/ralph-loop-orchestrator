@@ -1,9 +1,54 @@
-import { loadConfig } from '../src/config.js';
 import { GitHubClient } from '../src/integrations/github/client.js';
 
+type Args = {
+  owner: string;
+  repo: string;
+  appId: string;
+  installationId: number;
+  privateKey: string;
+};
+
+function getArg(name: string): string | undefined {
+  const index = process.argv.findIndex((arg) => arg === `--${name}`);
+  if (index === -1) {
+    return undefined;
+  }
+  return process.argv[index + 1];
+}
+
+function loadArgs(): Args {
+  const owner = getArg('owner') ?? process.env.GITHUB_TARGET_OWNER;
+  const repo = getArg('repo') ?? process.env.GITHUB_TARGET_REPO;
+  const appId = getArg('app-id') ?? process.env.GITHUB_APP_ID;
+  const installationIdRaw = getArg('installation-id') ?? process.env.GITHUB_APP_INSTALLATION_ID;
+  const privateKeyRaw = getArg('private-key') ?? process.env.GITHUB_APP_PRIVATE_KEY;
+
+  if (!owner || !repo || !appId || !installationIdRaw || !privateKeyRaw) {
+    throw new Error(
+      'Missing required GitHub App config. Provide --owner --repo --app-id --installation-id --private-key or matching env vars.',
+    );
+  }
+
+  return {
+    owner,
+    repo,
+    appId,
+    installationId: Number(installationIdRaw),
+    privateKey: privateKeyRaw.replace(/\\n/g, '\n'),
+  };
+}
+
 async function main() {
-  const config = loadConfig();
-  const client = new GitHubClient(config.github);
+  const args = loadArgs();
+  const client = new GitHubClient({
+    webhookSecret: 'unused',
+    appId: args.appId,
+    appPrivateKey: args.privateKey,
+    installationId: args.installationId,
+    targetOwner: args.owner,
+    targetRepo: args.repo,
+    baseBranch: 'main',
+  });
 
   await client.ensureLabels([
     { name: 'agent:backend', color: '5319E7', description: 'Assigned to Backend Engineer agent' },

@@ -88,3 +88,4 @@ npm run ralph:all -- --prd ./PRD.md --cycles 3
 - `docs/architecture.md`
 - `docs/api-contracts.md`
 - `docs/operations.md`
+- `docs/deep-research-report.md`

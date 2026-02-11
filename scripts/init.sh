@@ -243,8 +243,9 @@ EOF
 
 # ----- Per-Role AGENTS.md Files -----
 for role in architect backend frontend qa design-enforcer reviewer; do
+  role_title="$(echo "$role" | awk -F'-' '{for (i=1; i<=NF; i++) {$i=toupper(substr($i,1,1)) substr($i,2)}} 1' OFS='-')"
   cat > ".ralph-team/agents/${role}.md" << EOF
-# ${role^} Agent — Accumulated Knowledge
+# ${role_title} Agent — Accumulated Knowledge
 
 This file is updated by the ${role} agent after each iteration.
 Future iterations read this file to benefit from previously discovered
