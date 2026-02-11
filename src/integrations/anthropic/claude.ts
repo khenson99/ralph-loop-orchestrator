@@ -6,10 +6,14 @@ import { AgentResultV1Schema, type AgentResultV1, type FormalSpecV1 } from '../.
 export class ClaudeAdapter {
   private readonly client: Anthropic;
   private readonly model: string;
+  private readonly dryRun: boolean;
+  private readonly hasApiKey: boolean;
 
-  constructor(config: AppConfig['anthropic']) {
-    this.client = new Anthropic({ apiKey: config.apiKey });
+  constructor(config: AppConfig['anthropic'], dryRun = false) {
+    this.client = new Anthropic({ apiKey: config.apiKey ?? 'dry-run-key' });
     this.model = config.model;
+    this.dryRun = dryRun;
+    this.hasApiKey = Boolean(config.apiKey);
   }
 
   async executeSubtask(params: {
@@ -18,6 +22,18 @@ export class ClaudeAdapter {
     ownerRole: string;
     spec: FormalSpecV1;
   }): Promise<AgentResultV1> {
+    if (this.dryRun || !this.hasApiKey) {
+      return AgentResultV1Schema.parse({
+        task_id: params.taskId,
+        status: 'completed',
+        summary: `DRY_RUN completed task "${params.taskTitle}"`,
+        files_changed: [],
+        commands_ran: [{ cmd: 'echo dry-run', exit_code: 0 }],
+        open_questions: [],
+        handoff_notes: 'No code changes produced in dry-run mode.',
+      });
+    }
+
     const prompt = `
 You are ${params.ownerRole} in a Ralph Loop execution worker.
 Return ONLY JSON that matches AgentResultV1.

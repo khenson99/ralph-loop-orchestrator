@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import { loadConfig } from './config.js';
 import { buildServer } from './api/server.js';
 import { ClaudeAdapter } from './integrations/anthropic/claude.js';
@@ -18,8 +20,8 @@ async function main() {
   const dbClient = new DatabaseClient(config.databaseUrl);
   const repo = new WorkflowRepository(dbClient);
   const github = new GitHubClient(config.github);
-  const codex = new CodexAdapter(config.openai);
-  const claude = new ClaudeAdapter(config.anthropic);
+  const codex = new CodexAdapter(config.openai, config.dryRun);
+  const claude = new ClaudeAdapter(config.anthropic, config.dryRun);
 
   const orchestrator = new OrchestratorService(repo, github, codex, claude, config, logger);
 

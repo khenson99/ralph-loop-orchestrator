@@ -17,6 +17,15 @@ export class GitHubClient {
   private readonly octokit: Octokit;
 
   constructor(private readonly config: AppConfig['github']) {
+    if (this.config.token) {
+      this.octokit = new Octokit({ auth: this.config.token });
+      return;
+    }
+
+    if (!this.config.appId || !this.config.appPrivateKey || !this.config.installationId) {
+      throw new Error('GitHub app configuration is incomplete.');
+    }
+
     this.octokit = new Octokit({
       authStrategy: createAppAuth,
       auth: {
