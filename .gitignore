@@ -8,3 +8,6 @@ coverage
 .ralph-team-template-prompts
 *.log
 .DS_Store
+
+# Ralph Team Loop — ephemeral task files
+.ralph-team/current-tasks/
