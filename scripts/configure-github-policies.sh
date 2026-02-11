@@ -8,6 +8,7 @@ OWNER=""
 REPO=""
 BRANCH="main"
 CHECKS="CI / Lint + Typecheck,CI / Tests"
+REQUIRED_APPROVALS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -15,6 +16,7 @@ while [[ $# -gt 0 ]]; do
     --repo) REPO="$2"; shift 2 ;;
     --branch) BRANCH="$2"; shift 2 ;;
     --checks) CHECKS="$2"; shift 2 ;;
+    --required-approvals) REQUIRED_APPROVALS="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -44,6 +46,7 @@ echo "Configuring branch protection for $BRANCH..."
 contexts_json="$(printf '%s\n' "${CONTEXTS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
 branch_payload="$(jq -n \
   --argjson contexts "$contexts_json" \
+  --argjson requiredApprovals "$REQUIRED_APPROVALS" \
   '{
     required_status_checks: {
       strict: true,
@@ -51,7 +54,7 @@ branch_payload="$(jq -n \
     },
     enforce_admins: true,
     required_pull_request_reviews: {
-      required_approving_review_count: 1,
+      required_approving_review_count: $requiredApprovals,
       dismiss_stale_reviews: true,
       require_code_owner_reviews: false
     },
