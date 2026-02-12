@@ -52,6 +52,11 @@ export class InvalidTransitionError extends Error {
 export type ErrorCategory = 'transient' | 'deterministic' | 'unknown';
 
 export function classifyError(error: unknown): ErrorCategory {
+  // ZodError is always deterministic — schema violations are not recoverable by retry
+  if (error instanceof Error && error.name === 'ZodError') {
+    return 'deterministic';
+  }
+
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
     // Network / timeout / rate-limit errors are transient

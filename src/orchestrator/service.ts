@@ -12,6 +12,7 @@ import {
 import { RetryExhaustedError, withRetry } from '../lib/retry.js';
 import type { WebhookEventEnvelope } from '../schemas/contracts.js';
 import { classifyError } from './stages.js';
+import { formatDeadLetterReason } from '../lib/errors.js';
 import type { WorkflowRepository } from '../state/repository.js';
 
 export type EnqueuePayload = {
@@ -269,7 +270,7 @@ export class OrchestratorService {
 
       await this.repo.markEventProcessed(item.eventId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown run failure';
+      const message = formatDeadLetterReason(error);
       this.logger.error(
         {
           err: error,
