@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
 
 import yaml from 'js-yaml';
 
@@ -581,5 +581,107 @@ export class WorkflowRepository {
       .limit(1);
 
     return row[0] ?? null;
+  }
+
+  async listRunLogEntries(
+    runId: string,
+    options: {
+      after?: string;
+      source?: string;
+      taskKey?: string;
+      status?: string;
+      query?: string;
+      limit?: number;
+    } = {},
+  ): Promise<
+    Array<{
+      id: string;
+      timestamp: string;
+      source: 'attempt' | 'artifact';
+      taskKey: string | null;
+      status: string | null;
+      message: string;
+      metadata: Record<string, unknown>;
+    }>
+  > {
+    const limit = Math.max(1, Math.min(500, options.limit ?? 200));
+    const afterDate = options.after ? new Date(options.after) : null;
+
+    const artifactRows = await this.dbClient.db
+      .select({
+        id: artifacts.id,
+        createdAt: artifacts.createdAt,
+        kind: artifacts.kind,
+        taskId: artifacts.taskId,
+        content: artifacts.content,
+        metadata: artifacts.metadata,
+      })
+      .from(artifacts)
+      .where(
+        and(
+          eq(artifacts.workflowRunId, runId),
+          afterDate ? gt(artifacts.createdAt, afterDate) : undefined,
+        ),
+      )
+      .orderBy(asc(artifacts.createdAt))
+      .limit(limit);
+
+    const attemptRows = await this.dbClient.db
+      .select({
+        id: agentAttempts.id,
+        createdAt: agentAttempts.createdAt,
+        taskKey: tasks.taskKey,
+        status: agentAttempts.status,
+        output: agentAttempts.output,
+        error: agentAttempts.error,
+        errorCategory: agentAttempts.errorCategory,
+      })
+      .from(agentAttempts)
+      .innerJoin(tasks, eq(tasks.id, agentAttempts.taskId))
+      .where(
+        and(
+          eq(tasks.workflowRunId, runId),
+          afterDate ? gt(agentAttempts.createdAt, afterDate) : undefined,
+        ),
+      )
+      .orderBy(asc(agentAttempts.createdAt))
+      .limit(limit);
+
+    const entries = [
+      ...artifactRows.map((row) => ({
+        id: row.id,
+        timestamp: row.createdAt.toISOString(),
+        source: 'artifact' as const,
+        taskKey: row.taskId,
+        status: row.kind,
+        message: row.content.length > 1200 ? `${row.content.slice(0, 1200)}...` : row.content,
+        metadata: row.metadata,
+      })),
+      ...attemptRows.map((row) => ({
+        id: row.id,
+        timestamp: row.createdAt.toISOString(),
+        source: 'attempt' as const,
+        taskKey: row.taskKey,
+        status: row.status,
+        message: row.error ?? JSON.stringify(row.output ?? {}),
+        metadata: {
+          errorCategory: row.errorCategory,
+        },
+      })),
+    ]
+      .filter((entry) => (options.source ? entry.source === options.source : true))
+      .filter((entry) => (options.taskKey ? entry.taskKey === options.taskKey : true))
+      .filter((entry) => (options.status ? entry.status === options.status : true))
+      .filter((entry) => {
+        if (!options.query) {
+          return true;
+        }
+        const q = options.query.toLowerCase();
+        const text = `${entry.message} ${entry.taskKey ?? ''} ${entry.status ?? ''}`.toLowerCase();
+        return text.includes(q);
+      })
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    return entries.slice(-limit);
   }
 }
