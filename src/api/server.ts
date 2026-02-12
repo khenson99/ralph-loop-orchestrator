@@ -17,6 +17,12 @@ import {
 } from '../schemas/contracts.js';
 import { BOARD_LANES, groupCardsByLane, projectBoardCards } from '../ui/kanban-model.js';
 
+const ACTION_POLICY: Record<string, ReadonlyArray<string>> = {
+  approve: ['admin'],
+  request_changes: ['operator', 'admin'],
+  block: ['operator', 'admin'],
+};
+
 export type AppServices = {
   config: AppConfig;
   dbClient: {
@@ -341,6 +347,7 @@ export function buildServer(services: AppServices) {
         : ((bodyRaw as { action?: string; reason?: string }) ?? {});
     const action = String(parsedBody.action ?? '').trim();
     const reason = String(parsedBody.reason ?? '').trim();
+    const role = String(request.headers['x-supervisor-role'] ?? 'viewer').trim().toLowerCase();
 
     if (!['approve', 'request_changes', 'block'].includes(action)) {
       return reply.status(400).send({ error: 'invalid_action' });
@@ -348,6 +355,11 @@ export function buildServer(services: AppServices) {
 
     if (!reason) {
       return reply.status(400).send({ error: 'reason_required' });
+    }
+
+    const allowedRoles = ACTION_POLICY[action] ?? [];
+    if (!allowedRoles.includes(role)) {
+      return reply.status(403).send({ error: 'forbidden_action', action, role });
     }
 
     if (!services.github) {
@@ -639,6 +651,14 @@ export function buildServer(services: AppServices) {
         <div class="panel">
           <h3>Action Controls</h3>
           <div class="grid">
+            <div class="logs-toolbar">
+              <label for="roleSelect" class="meta">Role</label>
+              <select id="roleSelect">
+                <option value="viewer">viewer</option>
+                <option value="operator">operator</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
             <textarea id="actionReason" rows="4" style="width: 100%; background: #0e1830; color: var(--text); border: 1px solid #2e446f; border-radius: 8px; padding: 8px;" placeholder="Enter required reason..."></textarea>
             <div class="logs-toolbar">
               <button id="actionApprove">Approve PR</button>
@@ -654,6 +674,11 @@ export function buildServer(services: AppServices) {
   <script>
     const runId = ${JSON.stringify(runId)};
     let logCursor = null;
+    const uiActionPolicy = {
+      approve: ['admin'],
+      request_changes: ['operator', 'admin'],
+      block: ['operator', 'admin'],
+    };
     async function load() {
       const runResponse = await fetch('/api/runs/' + encodeURIComponent(runId));
       if (!runResponse.ok) {
@@ -778,8 +803,14 @@ export function buildServer(services: AppServices) {
       await loadLogs(true);
     });
     async function sendAction(action) {
+      const role = document.getElementById('roleSelect').value || 'viewer';
       const reason = (document.getElementById('actionReason').value || '').trim();
       const resultEl = document.getElementById('actionResult');
+      const allowed = (uiActionPolicy[action] || []).includes(role);
+      if (!allowed) {
+        resultEl.textContent = 'Forbidden: role ' + role + ' cannot perform ' + action + '.';
+        return;
+      }
       if (!reason) {
         resultEl.textContent = 'Reason is required.';
         return;
@@ -789,7 +820,10 @@ export function buildServer(services: AppServices) {
       }
       const response = await fetch('/api/runs/' + encodeURIComponent(runId) + '/actions', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          'x-supervisor-role': role,
+        },
         body: JSON.stringify({ action, reason }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -802,6 +836,17 @@ export function buildServer(services: AppServices) {
     document.getElementById('actionApprove').addEventListener('click', () => sendAction('approve'));
     document.getElementById('actionChanges').addEventListener('click', () => sendAction('request_changes'));
     document.getElementById('actionBlock').addEventListener('click', () => sendAction('block'));
+    function syncActionAvailability() {
+      const role = document.getElementById('roleSelect').value || 'viewer';
+      const approveBtn = document.getElementById('actionApprove');
+      const changesBtn = document.getElementById('actionChanges');
+      const blockBtn = document.getElementById('actionBlock');
+      approveBtn.disabled = !uiActionPolicy.approve.includes(role);
+      changesBtn.disabled = !uiActionPolicy.request_changes.includes(role);
+      blockBtn.disabled = !uiActionPolicy.block.includes(role);
+    }
+    document.getElementById('roleSelect').addEventListener('change', syncActionAvailability);
+    syncActionAvailability();
     load();
   </script>
 </body>

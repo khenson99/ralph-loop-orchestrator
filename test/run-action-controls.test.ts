@@ -64,7 +64,7 @@ describe('run action controls API', () => {
       method: 'POST',
       url: '/api/runs/run-1/actions',
       payload: JSON.stringify({ action: 'approve', reason: '' }),
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-supervisor-role': 'admin' },
     });
     expect(missingReason.statusCode).toBe(400);
     expect(JSON.parse(missingReason.body)).toMatchObject({ error: 'reason_required' });
@@ -73,7 +73,7 @@ describe('run action controls API', () => {
       method: 'POST',
       url: '/api/runs/run-1/actions',
       payload: JSON.stringify({ action: 'approve', reason: 'All checks verified manually.' }),
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-supervisor-role': 'admin' },
     });
     expect(approve.statusCode).toBe(200);
     expect(approvePullRequest).toHaveBeenCalledTimes(1);
@@ -82,10 +82,19 @@ describe('run action controls API', () => {
       method: 'POST',
       url: '/api/runs/run-1/actions',
       payload: JSON.stringify({ action: 'block', reason: 'Security findings unresolved.' }),
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-supervisor-role': 'operator' },
     });
     expect(block.statusCode).toBe(200);
     expect(requestChanges).toHaveBeenCalledTimes(1);
+
+    const forbidden = await app.inject({
+      method: 'POST',
+      url: '/api/runs/run-1/actions',
+      payload: JSON.stringify({ action: 'approve', reason: 'viewer cannot approve' }),
+      headers: { 'content-type': 'application/json', 'x-supervisor-role': 'viewer' },
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(JSON.parse(forbidden.body)).toMatchObject({ error: 'forbidden_action' });
 
     await app.close();
   });
