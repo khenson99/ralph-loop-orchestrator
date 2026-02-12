@@ -18,20 +18,31 @@ import {
   EpicDispatchResponseSchema,
   EpicListResponseSchema,
   RepoListResponseSchema,
+  RuntimeActionResponseSchema,
+  RuntimeLogsResponseSchema,
+  RuntimeProcessIdSchema,
+  RuntimeProcessListResponseSchema,
   RunResponseSchema,
   TaskActionResponseSchema,
   TaskDetailResponseSchema,
   TaskResponseSchema,
   TimelineEventSchema,
   type BoardCard,
+  type RuntimeProcessId,
   type WebhookEventEnvelope,
 } from '../schemas/contracts.js';
 import type { WorkflowRepository } from '../state/repository.js';
-import { FRONTEND_APP_HTML } from './frontend-app.js';
+import { FRONTEND_APP_HTML, readUnifiedFrontendAsset } from './frontend-app.js';
+import type {
+  RuntimeProcessAction as SupervisorProcessAction,
+  RuntimeProcessSnapshot,
+  RuntimeSupervisorEvent,
+} from '../runtime/process-supervisor.js';
 
 type LaneId = 'intake' | 'spec_drafting' | 'ready' | 'in_progress' | 'in_review' | 'blocked' | 'done';
 type UserRole = 'viewer' | 'operator' | 'reviewer' | 'admin';
 type TaskAction = 'retry' | 'retry_attempt' | 'reassign' | 'escalate' | 'block' | 'unblock';
+type RuntimeAction = 'start' | 'stop' | 'restart';
 
 const laneOrder: Array<{ lane: LaneId; wip_limit: number }> = [
   { lane: 'intake', wip_limit: 20 },
@@ -62,6 +73,30 @@ type WorkflowRepoContract = Pick<
   | 'listTaskTimeline'
   | 'recordEventIfNew'
 >;
+
+type RuntimeSupervisorContract = {
+  listProcesses: () => RuntimeProcessSnapshot[];
+  listLogs: (
+    processId: RuntimeProcessId,
+    limit?: number,
+  ) => Array<{
+    seq: number;
+    process_id: RuntimeProcessId;
+    run_id: number;
+    timestamp: string;
+    stream: 'stdout' | 'stderr' | 'system';
+    line: string;
+  }>;
+  executeAction: (params: {
+    processId: RuntimeProcessId;
+    action: SupervisorProcessAction;
+    requestedBy: string;
+    reason: string;
+    maxIterations?: number;
+    prdPath?: string;
+  }) => Promise<{ accepted: boolean; process: RuntimeProcessSnapshot; error?: string }>;
+  subscribe: (listener: (event: RuntimeSupervisorEvent) => void) => () => void;
+};
 
 type GitHubContract = {
   getPullRequestChecksSnapshot: (
@@ -108,6 +143,7 @@ export type AppServices = {
   orchestrator: {
     enqueue: (item: { eventId: string; envelope: WebhookEventEnvelope }) => void;
   };
+  runtimeSupervisor: RuntimeSupervisorContract;
   logger: Logger;
 };
 
@@ -266,6 +302,14 @@ function normalizeAction(actionRaw: string):
   return actionRaw as TaskAction;
 }
 
+function normalizeRuntimeAction(actionRaw: string): RuntimeAction | null {
+  const allowed = new Set(['start', 'stop', 'restart']);
+  if (!allowed.has(actionRaw)) {
+    return null;
+  }
+  return actionRaw as RuntimeAction;
+}
+
 function hasTopic(topics: Set<string>, candidate: string): boolean {
   return topics.size === 0 || topics.has(candidate);
 }
@@ -327,6 +371,12 @@ const actionRoleMap: Record<TaskAction, UserRole[]> = {
   unblock: ['reviewer', 'admin'],
 };
 
+const runtimeActionRoleMap: Record<RuntimeAction, UserRole[]> = {
+  start: ['operator', 'reviewer', 'admin'],
+  stop: ['operator', 'reviewer', 'admin'],
+  restart: ['operator', 'reviewer', 'admin'],
+};
+
 function listAllowedActions(roles: Set<UserRole>): TaskAction[] {
   const actions = Object.entries(actionRoleMap)
     .filter(([, allowedRoles]) => allowedRoles.some((role) => roles.has(role)))
@@ -353,6 +403,32 @@ export function buildServer(services: AppServices) {
       client.send({ event: params.event, payload: params.payload, id: eventId });
     }
   };
+
+  const publishRuntimeEvent = (event: RuntimeSupervisorEvent) => {
+    if (event.type === 'status') {
+      broadcast({
+        event: 'runtime.process',
+        topics: ['runtime', `runtime_${event.process.process_id}`],
+        payload: {
+          action: event.action,
+          process: event.process,
+          occurred_at: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    broadcast({
+      event: 'runtime.log',
+      topics: ['runtime', `runtime_${event.process_id}`],
+      payload: {
+        process_id: event.process_id,
+        entry: event.entry,
+      },
+    });
+  };
+
+  const unsubscribeRuntimeEvents = services.runtimeSupervisor.subscribe(publishRuntimeEvent);
 
   const fetchLivePrSnapshots = async (prEntries: Array<{ prNumber: number; sourceOwner: string; sourceRepo: string }>) => {
     const deduped = new Map<string, { prNumber: number; sourceOwner: string; sourceRepo: string }>();
@@ -399,13 +475,74 @@ export function buildServer(services: AppServices) {
     done(null, body);
   });
 
+  const unifiedMimeTypes: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+  };
+
+  const extensionFromPath = (path: string) => {
+    const index = path.lastIndexOf('.');
+    if (index < 0) {
+      return '';
+    }
+    return path.slice(index);
+  };
+
+  app.addHook('onClose', async () => {
+    unsubscribeRuntimeEvents();
+  });
+
   app.get('/', async (_, reply) => {
     return reply.redirect('/app');
   });
 
   app.get('/app', async (_, reply) => {
+    if (services.config.uiUnifiedConsole) {
+      const html = readUnifiedFrontendAsset('index.html');
+      if (!html) {
+        return reply.status(500).send({ error: 'unified_frontend_missing' });
+      }
+      reply.type('text/html; charset=utf-8');
+      return html;
+    }
+
     reply.type('text/html; charset=utf-8');
     return FRONTEND_APP_HTML;
+  });
+
+  app.get('/app/app-config.js', async (_, reply) => {
+    if (!services.config.uiUnifiedConsole) {
+      return reply.status(404).send({ error: 'not_found' });
+    }
+    const runtimeApiBase = services.config.uiRuntimeApiBase
+      ? JSON.stringify(services.config.uiRuntimeApiBase)
+      : 'undefined';
+    const payload = `window.__RALPH_CONFIG__ = Object.assign({}, window.__RALPH_CONFIG__ || {}, { apiBase: ${runtimeApiBase} });`;
+    reply.type('application/javascript; charset=utf-8');
+    return payload;
+  });
+
+  app.get('/app/*', async (request, reply) => {
+    if (!services.config.uiUnifiedConsole) {
+      return reply.status(404).send({ error: 'not_found' });
+    }
+
+    const assetPath = String((request.params as { '*': string })['*'] ?? '').trim();
+    if (!assetPath || assetPath === 'app-config.js' || assetPath.includes('..')) {
+      return reply.status(404).send({ error: 'asset_not_found' });
+    }
+
+    const asset = readUnifiedFrontendAsset(assetPath);
+    if (!asset) {
+      return reply.status(404).send({ error: 'asset_not_found' });
+    }
+
+    const ext = extensionFromPath(assetPath);
+    const mime = unifiedMimeTypes[ext] ?? 'text/plain; charset=utf-8';
+    reply.type(mime);
+    return asset;
   });
 
   app.get('/healthz', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -460,6 +597,44 @@ export function buildServer(services: AppServices) {
     };
   });
 
+  app.get('/api/v1/runs/recent', async (request) => {
+    const { limit } = request.query as { limit?: string };
+    const parsedLimit = Number.parseInt(limit ?? '50', 10);
+    const rows = await services.workflowRepo.listRecentRuns(Number.isFinite(parsedLimit) ? parsedLimit : 50);
+
+    return {
+      generated_at: new Date().toISOString(),
+      items: rows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        current_stage: row.currentStage,
+        issue_number: row.issueNumber,
+        pr_number: row.prNumber,
+        created_at: row.createdAt.toISOString(),
+        updated_at: row.updatedAt.toISOString(),
+      })),
+    };
+  });
+
+  app.get('/api/v1/tasks/recent', async (request) => {
+    const { limit } = request.query as { limit?: string };
+    const parsedLimit = Number.parseInt(limit ?? '100', 10);
+    const rows = await services.workflowRepo.listRecentTasks(Number.isFinite(parsedLimit) ? parsedLimit : 100);
+
+    return {
+      generated_at: new Date().toISOString(),
+      items: rows.map((row) => ({
+        id: row.id,
+        workflow_run_id: row.workflowRunId,
+        task_key: row.taskKey,
+        status: row.status,
+        attempts: row.attempts,
+        created_at: row.createdAt.toISOString(),
+        updated_at: row.updatedAt.toISOString(),
+      })),
+    };
+  });
+
   app.get('/api/runs/:runId', async (request, reply) => {
     const { runId } = request.params as { runId: string };
     const run = await services.workflowRepo.getRunView(runId);
@@ -508,6 +683,103 @@ export function buildServer(services: AppServices) {
       permissions: {
         actions: listAllowedActions(auth.roles),
       },
+    });
+  });
+
+  app.get('/api/v1/runtime/processes', async () => {
+    return RuntimeProcessListResponseSchema.parse({
+      generated_at: new Date().toISOString(),
+      items: services.runtimeSupervisor.listProcesses(),
+    });
+  });
+
+  app.get('/api/v1/runtime/processes/:processId/logs', async (request, reply) => {
+    const { processId } = request.params as { processId: string };
+    const parsedProcessId = RuntimeProcessIdSchema.safeParse(processId);
+    if (!parsedProcessId.success) {
+      return reply.status(404).send({ error: 'process_not_found' });
+    }
+    const query = request.query as { limit?: string };
+    const parsedLimit = Number.parseInt(query.limit ?? '400', 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 5000)) : 400;
+
+    return RuntimeLogsResponseSchema.parse({
+      process_id: parsedProcessId.data,
+      generated_at: new Date().toISOString(),
+      items: services.runtimeSupervisor.listLogs(parsedProcessId.data, limit),
+    });
+  });
+
+  app.post('/api/v1/runtime/processes/:processId/actions/:action', async (request, reply) => {
+    const { processId: rawProcessId, action: rawAction } = request.params as {
+      processId: string;
+      action: string;
+    };
+    const parsedProcessId = RuntimeProcessIdSchema.safeParse(rawProcessId);
+    if (!parsedProcessId.success) {
+      return reply.status(404).send({ error: 'process_not_found' });
+    }
+
+    const action = normalizeRuntimeAction(rawAction);
+    if (!action) {
+      return reply.status(404).send({ error: 'action_not_supported' });
+    }
+
+    const auth = getAuthContext(request.headers);
+    if (!auth.authenticated) {
+      return reply.status(401).send({ error: 'authentication_required' });
+    }
+
+    const requiredRoles = runtimeActionRoleMap[action];
+    const allowed = requiredRoles.some((role) => auth.roles.has(role));
+    if (!allowed) {
+      return reply.status(403).send({
+        error: 'forbidden',
+        action,
+        required_roles: requiredRoles,
+      });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = parseJsonBody(request.body);
+    } catch {
+      return reply.status(400).send({ error: 'invalid_json' });
+    }
+
+    const reason =
+      typeof body.reason === 'string' && body.reason.trim().length > 0
+        ? body.reason.trim()
+        : `${action} requested`;
+    const maxIterations =
+      typeof body.max_iterations === 'number'
+        ? body.max_iterations
+        : typeof body.max_iterations === 'string'
+          ? Number(body.max_iterations)
+          : undefined;
+    const prdPath = typeof body.prd_path === 'string' ? body.prd_path.trim() : undefined;
+
+    const result = await services.runtimeSupervisor.executeAction({
+      processId: parsedProcessId.data,
+      action,
+      requestedBy: auth.userId,
+      reason,
+      maxIterations: Number.isFinite(maxIterations) ? Number(maxIterations) : undefined,
+      prdPath,
+    });
+
+    if (!result.accepted) {
+      return reply.status(409).send({
+        error: result.error ?? 'action_rejected',
+        process: result.process,
+      });
+    }
+
+    return RuntimeActionResponseSchema.parse({
+      accepted: true,
+      action,
+      process: result.process,
+      occurred_at: new Date().toISOString(),
     });
   });
 

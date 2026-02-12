@@ -24,6 +24,15 @@ const config = {
   otelEnabled: false,
   dryRun: true,
   corsAllowedOrigins: [],
+  uiUnifiedConsole: true,
+  uiRuntimeApiBase: undefined,
+  runtimeSupervisor: {
+    plannerPrdPath: './docs/deep-research-report.md',
+    plannerMaxIterations: 10,
+    teamMaxIterations: 20,
+    reviewerMaxIterations: 10,
+    maxLogLines: 4000,
+  },
 };
 
 function createWorkflowRepoStub(overrides: Partial<Parameters<typeof buildServer>[0]['workflowRepo']> = {}) {
@@ -85,6 +94,29 @@ const githubStub: Parameters<typeof buildServer>[0]['github'] = {
   ],
 };
 
+const runtimeSupervisorStub: Parameters<typeof buildServer>[0]['runtimeSupervisor'] = {
+  listProcesses: () => [],
+  listLogs: () => [],
+  executeAction: async ({ processId }) => ({
+    accepted: true,
+    process: {
+      process_id: processId,
+      display_name: processId[0]?.toUpperCase() + processId.slice(1),
+      status: 'idle',
+      pid: null,
+      run_count: 0,
+      last_started_at: null,
+      last_stopped_at: null,
+      last_exit_code: null,
+      last_signal: null,
+      command: 'bash',
+      args: [],
+      error: null,
+    },
+  }),
+  subscribe: () => () => {},
+};
+
 describe('frontend API routes', () => {
   it('returns auth context and action permissions', async () => {
     const app = buildServer({
@@ -93,6 +125,7 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -128,6 +161,7 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -162,6 +196,7 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -187,6 +222,104 @@ describe('frontend API routes', () => {
     await app.close();
   });
 
+  it('lists runtime processes and logs', async () => {
+    const app = buildServer({
+      config,
+      dbClient: { ready: async () => true },
+      workflowRepo: createWorkflowRepoStub(),
+      github: githubStub,
+      orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: {
+        ...runtimeSupervisorStub,
+        listProcesses: () => [
+          {
+            process_id: 'planner',
+            display_name: 'Planner',
+            status: 'running',
+            pid: 12345,
+            run_count: 4,
+            last_started_at: '2026-02-12T00:00:00Z',
+            last_stopped_at: null,
+            last_exit_code: null,
+            last_signal: null,
+            command: 'bash',
+            args: ['/repo/scripts/run-planner.sh', '--prd', '/repo/PRD.md'],
+            error: null,
+          },
+        ],
+        listLogs: () => [
+          {
+            seq: 10,
+            process_id: 'planner',
+            run_id: 4,
+            timestamp: '2026-02-12T00:01:00Z',
+            stream: 'stdout',
+            line: 'Planner iteration 2',
+          },
+        ],
+      },
+      logger: createLogger('silent'),
+    });
+
+    const processResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/runtime/processes',
+    });
+    expect(processResponse.statusCode).toBe(200);
+    const processBody = JSON.parse(processResponse.body) as {
+      items: Array<{ process_id: string; status: string }>;
+    };
+    expect(processBody.items[0]).toMatchObject({ process_id: 'planner', status: 'running' });
+
+    const logsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/runtime/processes/planner/logs?limit=20',
+    });
+    expect(logsResponse.statusCode).toBe(200);
+    const logsBody = JSON.parse(logsResponse.body) as {
+      items: Array<{ process_id: string; line: string }>;
+    };
+    expect(logsBody.items[0]).toMatchObject({ process_id: 'planner', line: 'Planner iteration 2' });
+
+    await app.close();
+  });
+
+  it('enforces auth for runtime process actions', async () => {
+    const app = buildServer({
+      config,
+      dbClient: { ready: async () => true },
+      workflowRepo: createWorkflowRepoStub(),
+      github: githubStub,
+      orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
+      logger: createLogger('silent'),
+    });
+
+    const anonymousResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/runtime/processes/planner/actions/start',
+      headers: {
+        'content-type': 'application/json',
+      },
+      payload: JSON.stringify({ reason: 'run planner' }),
+    });
+    expect(anonymousResponse.statusCode).toBe(401);
+
+    const forbiddenResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/runtime/processes/planner/actions/start',
+      headers: {
+        'content-type': 'application/json',
+        'x-ralph-user': 'alice',
+        'x-ralph-roles': 'viewer',
+      },
+      payload: JSON.stringify({ reason: 'run planner' }),
+    });
+    expect(forbiddenResponse.statusCode).toBe(403);
+
+    await app.close();
+  });
+
   it('serves the built-in frontend app', async () => {
     const app = buildServer({
       config,
@@ -194,6 +327,7 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -205,7 +339,45 @@ describe('frontend API routes', () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toContain('text/html');
     expect(response.body).toContain('<!doctype html>');
-    expect(response.body).toContain('Ralph Loop Control Board');
+    expect(response.body).toContain('World-Class Orchestrator Console');
+
+    const scriptResponse = await app.inject({
+      method: 'GET',
+      url: '/app/main.js',
+    });
+    expect(scriptResponse.statusCode).toBe(200);
+    expect(scriptResponse.headers['content-type']).toContain('application/javascript');
+
+    const appConfigResponse = await app.inject({
+      method: 'GET',
+      url: '/app/app-config.js',
+    });
+    expect(appConfigResponse.statusCode).toBe(200);
+    expect(appConfigResponse.body).toContain('window.__RALPH_CONFIG__');
+
+    await app.close();
+  });
+
+  it('injects runtime API base into app config script when configured', async () => {
+    const app = buildServer({
+      config: {
+        ...config,
+        uiRuntimeApiBase: 'https://api.staging.example.com',
+      },
+      dbClient: { ready: async () => true },
+      workflowRepo: createWorkflowRepoStub(),
+      github: githubStub,
+      orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
+      logger: createLogger('silent'),
+    });
+
+    const appConfigResponse = await app.inject({
+      method: 'GET',
+      url: '/app/app-config.js',
+    });
+    expect(appConfigResponse.statusCode).toBe(200);
+    expect(appConfigResponse.body).toContain('https://api.staging.example.com');
 
     await app.close();
   });
@@ -238,6 +410,7 @@ describe('frontend API routes', () => {
       }),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -258,6 +431,63 @@ describe('frontend API routes', () => {
     expect(card?.lane).toBe('in_progress');
     expect(card?.owner.display_name).toBe('Frontend');
     expect(card?.signals.ci_status).toBe('passing');
+
+    await app.close();
+  });
+
+  it('returns v1 recent run and task summaries', async () => {
+    const app = buildServer({
+      config,
+      dbClient: { ready: async () => true },
+      workflowRepo: createWorkflowRepoStub({
+        listRecentRuns: async () => [
+          {
+            id: 'run-1',
+            status: 'in_progress',
+            currentStage: 'SubtasksDispatched',
+            issueNumber: 123,
+            prNumber: 44,
+            createdAt: new Date('2026-02-11T20:00:00Z'),
+            updatedAt: new Date('2026-02-11T21:00:00Z'),
+          },
+        ],
+        listRecentTasks: async () => [
+          {
+            id: 'task-1',
+            workflowRunId: 'run-1',
+            taskKey: 'MVP-1',
+            status: 'running',
+            attempts: 2,
+            createdAt: new Date('2026-02-11T20:10:00Z'),
+            updatedAt: new Date('2026-02-11T21:05:00Z'),
+          },
+        ],
+      }),
+      github: githubStub,
+      orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
+      logger: createLogger('silent'),
+    });
+
+    const runsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/runs/recent?limit=20',
+    });
+    expect(runsResponse.statusCode).toBe(200);
+    const runsBody = JSON.parse(runsResponse.body) as {
+      items: Array<{ id: string; current_stage: string }>;
+    };
+    expect(runsBody.items[0]).toMatchObject({ id: 'run-1', current_stage: 'SubtasksDispatched' });
+
+    const tasksResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/tasks/recent?limit=20',
+    });
+    expect(tasksResponse.statusCode).toBe(200);
+    const tasksBody = JSON.parse(tasksResponse.body) as {
+      items: Array<{ id: string; task_key: string }>;
+    };
+    expect(tasksBody.items[0]).toMatchObject({ id: 'task-1', task_key: 'MVP-1' });
 
     await app.close();
   });
@@ -308,6 +538,7 @@ describe('frontend API routes', () => {
       }),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -337,6 +568,7 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -362,6 +594,7 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -389,6 +622,7 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 

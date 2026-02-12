@@ -9,7 +9,9 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "prebuild": "npm run ui:sync",
     "build": "tsc -p tsconfig.json",
+    "ui:sync": "node scripts/sync-unified-ui.mjs",
     "start": "node dist/src/index.js",
     "lint": "eslint .",
     "format": "prettier --write .",

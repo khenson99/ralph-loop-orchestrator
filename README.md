@@ -11,6 +11,8 @@ Standalone orchestration service for a Ralph Team Loop workflow:
   - `GET /healthz`
   - `GET /readyz`
   - `GET /metrics`
+  - `GET /api/v1/runs/recent`
+  - `GET /api/v1/tasks/recent`
   - `GET /api/runs/:runId`
   - `GET /api/tasks/:taskId`
   - `GET /api/v1/boards/default`
@@ -18,11 +20,19 @@ Standalone orchestration service for a Ralph Team Loop workflow:
   - `GET /api/v1/tasks/:taskId/detail`
   - `GET /api/v1/tasks/:taskId/timeline`
   - `POST /api/v1/tasks/:taskId/actions/:action`
-  - `GET /api/v1/stream?topics=board,task_<id>` (SSE)
-- Built-in Kanban control UI served from the orchestrator:
+  - `GET /api/v1/runtime/processes`
+  - `GET /api/v1/runtime/processes/:processId/logs`
+  - `POST /api/v1/runtime/processes/:processId/actions/:action`
+  - `GET /api/v1/stream?topics=board,task_<id>,runtime` (SSE)
+- Unified ops console frontend served from the orchestrator:
   - `GET /app`
+  - `GET /app/app-config.js` runtime-injects `window.__RALPH_CONFIG__.apiBase`
   - Board/detail views use live GitHub PR check-run status when PR links exist
-- Optional static web console in `apps/vercel-console` for Vercel hosting
+- Shared frontend source of truth:
+  - `apps/orchestrator-ui/src`
+  - `npm run ui:sync` mirrors to `src/api/static/unified` and `apps/vercel-console`
+- Static web console target for Vercel hosting:
+  - `apps/vercel-console`
 - PostgreSQL persistence with Drizzle tables:
   - `workflow_runs`, `events`, `tasks`, `agent_attempts`, `artifacts`, `merge_decisions`
 - Codex adapter (Responses API) for:
@@ -53,8 +63,29 @@ Standalone orchestration service for a Ralph Team Loop workflow:
 6. Open the UI:
    - `http://localhost:3000/app`
 7. To execute task actions from the UI, set an identity:
-   - choose user + role in the top controls
+   - open `Settings` tab
+   - choose user + role in `Operator Identity`
    - action routes require `x-ralph-user` and enforce role permissions
+8. To route the UI to another API host:
+   - open `Settings > API Endpoint`
+   - set/test/save API base
+   - resolution order is `?apiBase=...` -> localStorage -> `window.__RALPH_CONFIG__.apiBase` -> same-origin
+9. To start planner/team/reviewer from the UI:
+   - set `RALPH_PLANNER_PRD_PATH` (or enter `prd_path` when starting planner)
+   - use the Loop Supervisor panel for start/stop/restart and log tailing
+
+## Unified UI sync
+
+Run this before commits/deployments when the frontend changes:
+
+```bash
+npm run ui:sync
+```
+
+This keeps these targets in parity:
+- `apps/orchestrator-ui/src` (authoritative source)
+- `src/api/static/unified` (`/app` assets)
+- `apps/vercel-console` (Vercel-hosted console)
 
 ## Configure GitHub repo policies
 

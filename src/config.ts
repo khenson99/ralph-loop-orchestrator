@@ -38,6 +38,16 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value ?? 'false').toLowerCase() === 'true'),
   CORS_ALLOWED_ORIGINS: z.string().optional().default(''),
+  UI_UNIFIED_CONSOLE: z
+    .string()
+    .optional()
+    .transform((value) => (value ?? 'true').toLowerCase() === 'true'),
+  UI_RUNTIME_API_BASE: z.string().optional().default(''),
+  RALPH_PLANNER_PRD_PATH: z.string().optional(),
+  RALPH_PLANNER_MAX_ITERATIONS: z.coerce.number().int().positive().default(10),
+  RALPH_TEAM_MAX_ITERATIONS: z.coerce.number().int().positive().default(20),
+  RALPH_REVIEWER_MAX_ITERATIONS: z.coerce.number().int().positive().default(10),
+  RALPH_SUPERVISOR_MAX_LOG_LINES: z.coerce.number().int().positive().default(4000),
 });
 
 export type AppConfig = {
@@ -68,6 +78,15 @@ export type AppConfig = {
   otelEnabled: boolean;
   dryRun: boolean;
   corsAllowedOrigins: string[];
+  uiUnifiedConsole: boolean;
+  uiRuntimeApiBase?: string;
+  runtimeSupervisor: {
+    plannerPrdPath?: string;
+    plannerMaxIterations: number;
+    teamMaxIterations: number;
+    reviewerMaxIterations: number;
+    maxLogLines: number;
+  };
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -128,5 +147,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     corsAllowedOrigins: parsed.CORS_ALLOWED_ORIGINS.split(',')
       .map((v) => v.trim())
       .filter((v) => v.length > 0),
+    uiUnifiedConsole: parsed.UI_UNIFIED_CONSOLE,
+    uiRuntimeApiBase: parsed.UI_RUNTIME_API_BASE.trim() || undefined,
+    runtimeSupervisor: {
+      plannerPrdPath: parsed.RALPH_PLANNER_PRD_PATH,
+      plannerMaxIterations: parsed.RALPH_PLANNER_MAX_ITERATIONS,
+      teamMaxIterations: parsed.RALPH_TEAM_MAX_ITERATIONS,
+      reviewerMaxIterations: parsed.RALPH_REVIEWER_MAX_ITERATIONS,
+      maxLogLines: parsed.RALPH_SUPERVISOR_MAX_LOG_LINES,
+    },
   };
 }

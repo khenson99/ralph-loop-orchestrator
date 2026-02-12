@@ -332,6 +332,59 @@ export const EpicDispatchResponseSchema = z.object({
   dispatched_at: z.string().datetime(),
 });
 
+export const RuntimeProcessIdSchema = z.enum(['planner', 'team', 'reviewer']);
+export const RuntimeProcessStatusSchema = z.enum([
+  'idle',
+  'starting',
+  'running',
+  'stopping',
+  'completed',
+  'failed',
+]);
+
+export const RuntimeProcessSchema = z.object({
+  process_id: RuntimeProcessIdSchema,
+  display_name: z.string(),
+  status: RuntimeProcessStatusSchema,
+  pid: z.number().int().nullable(),
+  run_count: z.number().int().nonnegative(),
+  last_started_at: z.string().datetime().nullable(),
+  last_stopped_at: z.string().datetime().nullable(),
+  last_exit_code: z.number().int().nullable(),
+  last_signal: z.string().nullable(),
+  command: z.string(),
+  args: z.array(z.string()),
+  error: z.string().nullable(),
+});
+
+export const RuntimeProcessListResponseSchema = z.object({
+  generated_at: z.string().datetime(),
+  items: z.array(RuntimeProcessSchema),
+});
+
+export const RuntimeLogEntrySchema = z.object({
+  seq: z.number().int().nonnegative(),
+  process_id: RuntimeProcessIdSchema,
+  run_id: z.number().int().nonnegative(),
+  timestamp: z.string().datetime(),
+  stream: z.enum(['stdout', 'stderr', 'system']),
+  line: z.string(),
+});
+
+export const RuntimeLogsResponseSchema = z.object({
+  process_id: RuntimeProcessIdSchema,
+  generated_at: z.string().datetime(),
+  items: z.array(RuntimeLogEntrySchema),
+});
+
+export const RuntimeActionResponseSchema = z.object({
+  accepted: z.boolean(),
+  action: z.enum(['start', 'stop', 'restart']),
+  process: RuntimeProcessSchema,
+  error: z.string().optional(),
+  occurred_at: z.string().datetime(),
+});
+
 export type WebhookEventEnvelope = z.infer<typeof WebhookEventEnvelopeSchema>;
 export type FormalSpecV1 = z.infer<typeof FormalSpecV1Schema>;
 export type AgentResultV1 = z.infer<typeof AgentResultV1Schema>;
@@ -347,3 +400,10 @@ export type AuthMeResponse = z.infer<typeof AuthMeResponseSchema>;
 export type RepoListResponse = z.infer<typeof RepoListResponseSchema>;
 export type EpicListResponse = z.infer<typeof EpicListResponseSchema>;
 export type EpicDispatchResponse = z.infer<typeof EpicDispatchResponseSchema>;
+export type RuntimeProcessId = z.infer<typeof RuntimeProcessIdSchema>;
+export type RuntimeProcessStatus = z.infer<typeof RuntimeProcessStatusSchema>;
+export type RuntimeProcess = z.infer<typeof RuntimeProcessSchema>;
+export type RuntimeProcessListResponse = z.infer<typeof RuntimeProcessListResponseSchema>;
+export type RuntimeLogEntry = z.infer<typeof RuntimeLogEntrySchema>;
+export type RuntimeLogsResponse = z.infer<typeof RuntimeLogsResponseSchema>;
+export type RuntimeActionResponse = z.infer<typeof RuntimeActionResponseSchema>;

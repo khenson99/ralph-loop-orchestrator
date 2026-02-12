@@ -26,6 +26,15 @@ const config = {
   otelEnabled: false,
   dryRun: true,
   corsAllowedOrigins: [],
+  uiUnifiedConsole: true,
+  uiRuntimeApiBase: undefined,
+  runtimeSupervisor: {
+    plannerPrdPath: './docs/deep-research-report.md',
+    plannerMaxIterations: 10,
+    teamMaxIterations: 20,
+    reviewerMaxIterations: 10,
+    maxLogLines: 4000,
+  },
 };
 
 afterEach(() => {
@@ -64,6 +73,29 @@ const githubStub: Parameters<typeof buildServer>[0]['github'] = {
   listEpicIssues: async () => [],
 };
 
+const runtimeSupervisorStub: Parameters<typeof buildServer>[0]['runtimeSupervisor'] = {
+  listProcesses: () => [],
+  listLogs: () => [],
+  executeAction: async ({ processId }) => ({
+    accepted: true,
+    process: {
+      process_id: processId,
+      display_name: processId[0]?.toUpperCase() + processId.slice(1),
+      status: 'idle',
+      pid: null,
+      run_count: 0,
+      last_started_at: null,
+      last_stopped_at: null,
+      last_exit_code: null,
+      last_signal: null,
+      command: 'bash',
+      args: [],
+      error: null,
+    },
+  }),
+  subscribe: () => () => {},
+};
+
 describe('github webhook route', () => {
   it('accepts valid signed webhook and enqueues run', async () => {
     const enqueue = vi.fn();
@@ -74,6 +106,7 @@ describe('github webhook route', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -112,6 +145,7 @@ describe('github webhook route', () => {
       workflowRepo: createWorkflowRepoStub(),
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 
@@ -150,6 +184,7 @@ describe('github webhook route', () => {
       }),
       github: githubStub,
       orchestrator: { enqueue },
+      runtimeSupervisor: runtimeSupervisorStub,
       logger: createLogger('silent'),
     });
 

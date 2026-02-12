@@ -8,6 +8,7 @@ import { CodexAdapter } from './integrations/openai/codex.js';
 import { createLogger } from './lib/logger.js';
 import { startTelemetry, stopTelemetry } from './lib/telemetry.js';
 import { OrchestratorService } from './orchestrator/service.js';
+import { ProcessSupervisor } from './runtime/process-supervisor.js';
 import { DatabaseClient } from './state/db.js';
 import { WorkflowRepository } from './state/repository.js';
 
@@ -22,6 +23,15 @@ async function main() {
   const github = new GitHubClient(config.github);
   const codex = new CodexAdapter(config.openai, config.dryRun);
   const claude = new ClaudeAdapter(config.anthropic, config.dryRun);
+  const runtimeSupervisor = new ProcessSupervisor({
+    cwd: process.cwd(),
+    plannerPrdPath: config.runtimeSupervisor.plannerPrdPath,
+    plannerMaxIterations: config.runtimeSupervisor.plannerMaxIterations,
+    teamMaxIterations: config.runtimeSupervisor.teamMaxIterations,
+    reviewerMaxIterations: config.runtimeSupervisor.reviewerMaxIterations,
+    maxLogLines: config.runtimeSupervisor.maxLogLines,
+    logger,
+  });
 
   const orchestrator = new OrchestratorService(repo, github, codex, claude, config, logger);
 
@@ -31,11 +41,13 @@ async function main() {
     workflowRepo: repo,
     github,
     orchestrator,
+    runtimeSupervisor,
     logger,
   });
 
   const close = async () => {
     logger.info('Shutting down server...');
+    await runtimeSupervisor.shutdown();
     await server.close();
     await dbClient.close();
     await stopTelemetry();
