@@ -25,54 +25,61 @@ const config = {
   dryRun: true,
 };
 
-describe('supervisor run detail page', () => {
-  it('serves run detail shell with timeline and panel composition', async () => {
+describe('run context API for spec and PR/CI panels', () => {
+  it('returns spec artifact and PR check status for a run', async () => {
     const app = buildServer({
       config,
       dbClient: { ready: async () => true },
       workflowRepo: {
         getRunView: async () => ({
-          id: 'run-123',
+          id: 'run-1',
           status: 'in_progress',
           currentStage: 'PRReviewed',
-          issueNumber: 21,
-          prNumber: 99,
-          specId: 'spec-1',
+          issueNumber: 22,
+          prNumber: 50,
+          specId: 'spec-22',
           deadLetterReason: null,
           createdAt: new Date('2026-02-12T07:00:00.000Z'),
           updatedAt: new Date('2026-02-12T07:10:00.000Z'),
-          tasks: [{ id: 't1', taskKey: 'T21-1', status: 'completed', attempts: 1 }],
-          artifacts: [{ id: 'a1', kind: 'formal_spec', createdAt: new Date('2026-02-12T07:05:00.000Z') }],
-          transitions: [
-            {
-              id: 'st1',
-              fromStage: 'TaskRequested',
-              toStage: 'SpecGenerated',
-              transitionedAt: new Date('2026-02-12T07:02:00.000Z'),
-              metadata: {},
-            },
-          ],
+          tasks: [],
+          artifacts: [],
+          transitions: [],
         }),
         getTaskView: async () => null,
         recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
+        getLatestArtifactByKind: async () => ({
+          id: 'a1',
+          kind: 'formal_spec',
+          content: 'spec_version: 1',
+          createdAt: new Date('2026-02-12T07:05:00.000Z'),
+        }),
+      },
+      github: {
+        getPullRequestChecks: async () => ({
+          prNumber: 50,
+          headSha: 'abc123',
+          checks: [{ name: 'CI / Tests', status: 'completed', conclusion: 'success' }],
+        }),
       },
       orchestrator: { enqueue: () => {} },
       logger: createLogger('silent'),
     });
 
-    const response = await app.inject({
-      method: 'GET',
-      url: '/supervisor/runs/run-123',
+    const specResponse = await app.inject({ method: 'GET', url: '/api/runs/run-1/spec' });
+    expect(specResponse.statusCode).toBe(200);
+    expect(JSON.parse(specResponse.body)).toMatchObject({
+      runId: 'run-1',
+      kind: 'formal_spec',
+      content: 'spec_version: 1',
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['content-type']).toContain('text/html');
-    expect(response.body).toContain('Timeline Spine');
-    expect(response.body).toContain('Run Summary');
-    expect(response.body).toContain('Spec Viewer');
-    expect(response.body).toContain('PR and CI Status');
-    expect(response.body).toContain('/api/runs/');
-    expect(response.body).toContain('Back to Board');
+    const prResponse = await app.inject({ method: 'GET', url: '/api/runs/run-1/pr-status' });
+    expect(prResponse.statusCode).toBe(200);
+    expect(JSON.parse(prResponse.body)).toMatchObject({
+      runId: 'run-1',
+      prNumber: 50,
+      headSha: 'abc123',
+    });
 
     await app.close();
   });

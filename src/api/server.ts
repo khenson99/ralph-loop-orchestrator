@@ -85,6 +85,29 @@ export type AppServices = {
         };
       }>
     >;
+    getLatestArtifactByKind?: (
+      runId: string,
+      kind: string,
+    ) => Promise<
+      | {
+          id: string;
+          kind: string;
+          content: string;
+          createdAt: Date;
+        }
+      | null
+    >;
+  };
+  github?: {
+    getPullRequestChecks: (prNumber: number) => Promise<{
+      prNumber: number;
+      headSha: string;
+      checks: Array<{
+        name: string;
+        status: string | null;
+        conclusion: string | null;
+      }>;
+    }>;
   };
   orchestrator: {
     enqueue: (item: { eventId: string; envelope: WebhookEventEnvelope }) => void;
@@ -140,6 +163,53 @@ export function buildServer(services: AppServices) {
       lanes: BOARD_LANES,
       cards: projected,
       grouped: groupCardsByLane(projected),
+    };
+  });
+
+  app.get('/api/runs/:runId/spec', async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    if (!services.workflowRepo.getLatestArtifactByKind) {
+      return reply.status(501).send({ error: 'artifact_lookup_not_supported' });
+    }
+
+    const artifact = await services.workflowRepo.getLatestArtifactByKind(runId, 'formal_spec');
+    if (!artifact) {
+      return reply.status(404).send({ error: 'spec_not_found' });
+    }
+
+    return {
+      runId,
+      kind: artifact.kind,
+      content: artifact.content,
+      createdAt: artifact.createdAt.toISOString(),
+    };
+  });
+
+  app.get('/api/runs/:runId/pr-status', async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    const run = await services.workflowRepo.getRunView(runId);
+    if (!run) {
+      return reply.status(404).send({ error: 'run_not_found' });
+    }
+
+    if (!run.prNumber) {
+      return {
+        runId,
+        prNumber: null,
+        checks: [],
+      };
+    }
+
+    if (!services.github) {
+      return reply.status(501).send({ error: 'github_checks_not_supported' });
+    }
+
+    const status = await services.github.getPullRequestChecks(run.prNumber);
+    return {
+      runId,
+      prNumber: status.prNumber,
+      headSha: status.headSha,
+      checks: status.checks,
     };
   });
 
@@ -328,19 +398,33 @@ export function buildServer(services: AppServices) {
           <h3>Artifacts</h3>
           <div id="artifacts" class="grid"></div>
         </div>
+        <div class="panel">
+          <h3>Spec Viewer</h3>
+          <div id="spec" class="row"></div>
+        </div>
+        <div class="panel">
+          <h3>PR and CI Status</h3>
+          <div id="prStatus" class="grid"></div>
+        </div>
       </section>
     </div>
   </div>
   <script>
     const runId = ${JSON.stringify(runId)};
     async function load() {
-      const response = await fetch('/api/runs/' + encodeURIComponent(runId));
-      if (!response.ok) {
+      const runResponse = await fetch('/api/runs/' + encodeURIComponent(runId));
+      if (!runResponse.ok) {
         document.getElementById('summary').innerHTML = '<div class="error">Run not found or unavailable.</div>';
         return;
       }
-      const run = await response.json();
+      const run = await runResponse.json();
+      const specResponse = await fetch('/api/runs/' + encodeURIComponent(runId) + '/spec');
+      const prResponse = await fetch('/api/runs/' + encodeURIComponent(runId) + '/pr-status');
+      const spec = specResponse.ok ? await specResponse.json() : null;
+      const pr = prResponse.ok ? await prResponse.json() : null;
       render(run);
+      renderSpec(spec);
+      renderPrStatus(pr);
     }
     function render(run) {
       document.getElementById('title').textContent = 'Run ' + run.id;
@@ -378,6 +462,35 @@ export function buildServer(services: AppServices) {
         row.innerHTML = '<div><strong>' + artifact.kind + '</strong></div><div class="meta">' + new Date(artifact.createdAt).toLocaleString() + '</div>';
         artifacts.appendChild(row);
       }
+    }
+    function renderSpec(spec) {
+      const container = document.getElementById('spec');
+      if (!spec || !spec.content) {
+        container.innerHTML = '<div class="meta">No spec artifact available for this run.</div>';
+        return;
+      }
+      const safe = String(spec.content)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+      container.innerHTML = '<div class="meta">Captured at ' + new Date(spec.createdAt).toLocaleString() + '</div><pre style="white-space: pre-wrap; margin: 8px 0 0; color: #cde2ff;">' + safe + '</pre>';
+    }
+    function renderPrStatus(pr) {
+      const container = document.getElementById('prStatus');
+      if (!pr) {
+        container.innerHTML = '<div class="row">PR/CI status unavailable.</div>';
+        return;
+      }
+      if (!pr.prNumber) {
+        container.innerHTML = '<div class="row">No PR linked to this run.</div>';
+        return;
+      }
+      const checks = Array.isArray(pr.checks) ? pr.checks : [];
+      const rows = ['<div class="row"><strong>PR #' + pr.prNumber + '</strong><div class="meta">head=' + (pr.headSha || 'n/a') + '</div></div>'];
+      for (const check of checks) {
+        rows.push('<div class="row"><strong>' + check.name + '</strong><div class="meta">status=' + check.status + ' · conclusion=' + (check.conclusion || 'pending') + '</div></div>');
+      }
+      container.innerHTML = rows.join('');
     }
     load();
   </script>

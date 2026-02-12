@@ -561,4 +561,25 @@ export class WorkflowRepository {
       updatedAt: row[0].updatedAt,
     };
   }
+
+  async getLatestArtifactByKind(runId: string, kind: string): Promise<{
+    id: string;
+    kind: string;
+    content: string;
+    createdAt: Date;
+  } | null> {
+    const row = await this.dbClient.db
+      .select({
+        id: artifacts.id,
+        kind: artifacts.kind,
+        content: artifacts.content,
+        createdAt: artifacts.createdAt,
+      })
+      .from(artifacts)
+      .where(and(eq(artifacts.workflowRunId, runId), eq(artifacts.kind, kind)))
+      .orderBy(desc(artifacts.createdAt))
+      .limit(1);
+
+    return row[0] ?? null;
+  }
 }
