@@ -659,6 +659,7 @@ export function buildServer(services: AppServices) {
     .event .meta { font-size: 12px; color: var(--muted); }
     .grid { display: grid; gap: 10px; }
     .row { border: 1px solid #2a3f67; border-radius: 10px; padding: 8px 10px; background: #0f1a2f; }
+    .row.selected { border-color: #59b9ff; box-shadow: inset 0 0 0 1px rgba(89, 185, 255, 0.35); }
     .row .meta { font-size: 12px; color: var(--muted); }
     .logs-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
     .logs-toolbar input, .logs-toolbar select, .logs-toolbar button {
@@ -731,6 +732,19 @@ export function buildServer(services: AppServices) {
           <div id="transcript" class="grid" style="margin-top: 8px;"></div>
         </div>
         <div class="panel">
+          <h3>Agent Console v1</h3>
+          <div class="logs-toolbar">
+            <label for="agentTaskFilter" class="meta">Task</label>
+            <select id="agentTaskFilter" aria-label="Filter agent console by task"></select>
+            <button id="agentPrevAttempt" aria-label="Show previous attempt">Prev Attempt</button>
+            <button id="agentNextAttempt" aria-label="Show next attempt">Next Attempt</button>
+          </div>
+          <div id="agentAttemptLabel" class="meta"></div>
+          <div id="agentTimeline" class="grid" role="region" aria-label="Agent attempt timeline"></div>
+          <div id="agentToolSummary" class="grid" style="margin-top: 10px;"></div>
+          <pre id="agentTranscript" class="log-message"></pre>
+        </div>
+        <div class="panel">
           <h3>Action Controls</h3>
           <div class="grid">
             <div class="logs-toolbar">
@@ -756,6 +770,11 @@ export function buildServer(services: AppServices) {
   <script>
     const runId = ${JSON.stringify(runId)};
     let logCursor = null;
+    let allLogEntries = [];
+    const consoleState = {
+      taskKey: '',
+      attemptIndex: 0,
+    };
     const uiActionPolicy = {
       approve: ['admin'],
       request_changes: ['operator', 'admin'],
@@ -855,7 +874,22 @@ export function buildServer(services: AppServices) {
         return;
       }
       const payload = await response.json();
-      renderLogs(payload.entries || [], incremental);
+      const incoming = payload.entries || [];
+      if (!incremental) {
+        allLogEntries = incoming;
+      } else {
+        const merged = new Map();
+        for (const entry of allLogEntries) {
+          merged.set(entry.id, entry);
+        }
+        for (const entry of incoming) {
+          merged.set(entry.id, entry);
+        }
+        allLogEntries = Array.from(merged.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      }
+      renderLogs(incoming, incremental);
+      renderTranscript(allLogEntries);
+      renderAgentConsole(allLogEntries);
       logCursor = payload.nextCursor || logCursor;
     }
     function renderLogs(entries, append) {
@@ -876,7 +910,6 @@ export function buildServer(services: AppServices) {
           '<pre class="log-message">' + safe + '</pre>';
         container.appendChild(row);
       }
-      renderTranscript(entries);
     }
     function renderTranscript(entries) {
       const container = document.getElementById('transcript');
@@ -900,12 +933,151 @@ export function buildServer(services: AppServices) {
         container.appendChild(row);
       }
     }
+    function parseAttemptPayload(message) {
+      try {
+        const parsed = JSON.parse(message || '{}');
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      } catch {}
+      return null;
+    }
+    function extractAttemptEntries(entries) {
+      const attemptCounters = new Map();
+      return (entries || [])
+        .filter((entry) => entry.source === 'attempt')
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        .map((entry) => {
+          const taskKey = entry.taskKey || 'unknown';
+          const nextAttempt = (attemptCounters.get(taskKey) || 0) + 1;
+          attemptCounters.set(taskKey, nextAttempt);
+          const payload = parseAttemptPayload(entry.message);
+          const commands = payload && Array.isArray(payload.commands_ran) ? payload.commands_ran : [];
+          const files = payload && Array.isArray(payload.files_changed) ? payload.files_changed : [];
+          const summary = payload && typeof payload.summary === 'string' ? payload.summary : (entry.message || '').slice(0, 280);
+          return {
+            id: entry.id,
+            taskKey,
+            attemptNumber: nextAttempt,
+            timestamp: entry.timestamp,
+            status: entry.status || 'unknown',
+            summary,
+            commands,
+            files,
+            transcript: entry.message || '',
+          };
+        });
+    }
+    function renderAgentConsole(entries) {
+      const taskFilter = document.getElementById('agentTaskFilter');
+      const timeline = document.getElementById('agentTimeline');
+      const label = document.getElementById('agentAttemptLabel');
+      const toolSummary = document.getElementById('agentToolSummary');
+      const transcript = document.getElementById('agentTranscript');
+      const prevBtn = document.getElementById('agentPrevAttempt');
+      const nextBtn = document.getElementById('agentNextAttempt');
+      const attempts = extractAttemptEntries(entries);
+
+      timeline.innerHTML = '';
+      toolSummary.innerHTML = '';
+      transcript.textContent = '';
+
+      if (!attempts.length) {
+        taskFilter.innerHTML = '<option value="">No task attempts yet</option>';
+        label.textContent = 'No attempts available.';
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        return;
+      }
+
+      const taskKeys = [...new Set(attempts.map((item) => item.taskKey))];
+      if (!consoleState.taskKey || !taskKeys.includes(consoleState.taskKey)) {
+        consoleState.taskKey = taskKeys[0];
+        consoleState.attemptIndex = 0;
+      }
+
+      taskFilter.innerHTML = taskKeys.map((taskKey) => '<option value="' + taskKey + '">' + taskKey + '</option>').join('');
+      taskFilter.value = consoleState.taskKey;
+
+      const selectedAttempts = attempts.filter((item) => item.taskKey === consoleState.taskKey);
+      if (selectedAttempts.length === 0) {
+        label.textContent = 'No attempts available for selected task.';
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        return;
+      }
+
+      consoleState.attemptIndex = Math.max(0, Math.min(consoleState.attemptIndex, selectedAttempts.length - 1));
+      const selected = selectedAttempts[consoleState.attemptIndex];
+
+      label.textContent =
+        selected.taskKey +
+        ' · attempt ' +
+        selected.attemptNumber +
+        ' of ' +
+        selectedAttempts.length +
+        ' · status=' +
+        selected.status;
+
+      selectedAttempts.forEach((item, index) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'row' + (index === consoleState.attemptIndex ? ' selected' : '');
+        row.style.textAlign = 'left';
+        row.innerHTML =
+          '<div><strong>Attempt ' + item.attemptNumber + '</strong></div>' +
+          '<div class="meta">' + new Date(item.timestamp).toLocaleString() + ' · status=' + item.status + '</div>' +
+          '<div class="meta">' + String(item.summary || '').replaceAll('<', '&lt;').replaceAll('>', '&gt;') + '</div>';
+        row.addEventListener('click', () => {
+          consoleState.attemptIndex = index;
+          renderAgentConsole(allLogEntries);
+        });
+        timeline.appendChild(row);
+      });
+
+      const commandRows = selected.commands.map((command) => {
+        const cmd = command && typeof command.cmd === 'string' ? command.cmd : 'command';
+        const exitCode = command && Object.prototype.hasOwnProperty.call(command, 'exit_code')
+          ? String(command.exit_code)
+          : 'n/a';
+        return '<div class="row"><strong>' + cmd + '</strong><div class="meta">exit=' + exitCode + '</div></div>';
+      });
+      const fileRows = selected.files.map((filePath) => '<span class="badge">' + String(filePath) + '</span>');
+      if (commandRows.length === 0 && fileRows.length === 0) {
+        toolSummary.innerHTML = '<div class="row"><div class="meta">No tool call summary available for this attempt.</div></div>';
+      } else {
+        const filesHtml = fileRows.length > 0
+          ? '<div class="row"><div class="meta">Files changed</div><div class="badges">' + fileRows.join('') + '</div></div>'
+          : '';
+        toolSummary.innerHTML =
+          '<div class="meta">Tool Call Summary</div>' +
+          commandRows.join('') +
+          filesHtml;
+      }
+
+      transcript.textContent = selected.transcript || '';
+      prevBtn.disabled = consoleState.attemptIndex <= 0;
+      nextBtn.disabled = consoleState.attemptIndex >= selectedAttempts.length - 1;
+    }
     document.getElementById('logRefresh').addEventListener('click', async () => {
       logCursor = null;
       await loadLogs(false);
     });
     document.getElementById('logTail').addEventListener('click', async () => {
       await loadLogs(true);
+    });
+    document.getElementById('agentTaskFilter').addEventListener('change', (event) => {
+      consoleState.taskKey = event.target.value;
+      consoleState.attemptIndex = 0;
+      renderAgentConsole(allLogEntries);
+    });
+    document.getElementById('agentPrevAttempt').addEventListener('click', () => {
+      consoleState.attemptIndex = Math.max(0, consoleState.attemptIndex - 1);
+      renderAgentConsole(allLogEntries);
+    });
+    document.getElementById('agentNextAttempt').addEventListener('click', () => {
+      consoleState.attemptIndex += 1;
+      renderAgentConsole(allLogEntries);
     });
     async function sendAction(action) {
       const role = document.getElementById('roleSelect').value || 'viewer';
