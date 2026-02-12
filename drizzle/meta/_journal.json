@@ -8,6 +8,13 @@
       "when": 1770851460868,
       "tag": "0000_swift_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1770877486590,
+      "tag": "0001_known_veda",
+      "breakpoints": true
     }
   ]
 }
