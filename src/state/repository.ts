@@ -1,6 +1,8 @@
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 
 import type { AgentResultV1, MergeDecisionV1 } from '../schemas/contracts.js';
+import { InvalidTransitionError, isValidTransition } from '../orchestrator/stages.js';
+import type { ErrorCategory } from '../orchestrator/stages.js';
 import type { DatabaseClient } from './db.js';
 import {
   agentAttempts,
@@ -9,6 +11,7 @@ import {
   mergeDecisions,
   tasks,
   workflowRuns,
+  workflowStageTransitions,
 } from './schema.js';
 
 export class WorkflowRepository {
@@ -98,26 +101,70 @@ export class WorkflowRepository {
       .where(eq(events.id, eventId));
   }
 
-  async updateRunStage(runId: string, stage: string): Promise<void> {
-    await this.dbClient.db
-      .update(workflowRuns)
-      .set({
-        currentStage: stage,
-        updatedAt: sql`now()`,
-      })
-      .where(eq(workflowRuns.id, runId));
+  async updateRunStage(
+    runId: string,
+    stage: string,
+    transitionMetadata?: Record<string, unknown>,
+  ): Promise<void> {
+    // Read current stage, validate the transition, then update + record atomically
+    const [current] = await this.dbClient.db
+      .select({ currentStage: workflowRuns.currentStage })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, runId))
+      .limit(1);
+
+    const fromStage = current?.currentStage ?? 'TaskRequested';
+
+    if (!isValidTransition(fromStage, stage)) {
+      throw new InvalidTransitionError(fromStage, stage);
+    }
+
+    await this.dbClient.db.transaction(async (tx) => {
+      await tx
+        .update(workflowRuns)
+        .set({ currentStage: stage, updatedAt: sql`now()` })
+        .where(eq(workflowRuns.id, runId));
+
+      await tx.insert(workflowStageTransitions).values({
+        workflowRunId: runId,
+        fromStage,
+        toStage: stage,
+        metadata: transitionMetadata ?? {},
+      });
+    });
   }
 
   async storeSpec(runId: string, specId: string, specYaml: string): Promise<void> {
-    await this.dbClient.db
-      .update(workflowRuns)
-      .set({
-        specId,
-        specYaml,
-        currentStage: 'SpecGenerated',
-        updatedAt: sql`now()`,
-      })
-      .where(eq(workflowRuns.id, runId));
+    const [current] = await this.dbClient.db
+      .select({ currentStage: workflowRuns.currentStage })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, runId))
+      .limit(1);
+
+    const fromStage = current?.currentStage ?? 'TaskRequested';
+
+    if (!isValidTransition(fromStage, 'SpecGenerated')) {
+      throw new InvalidTransitionError(fromStage, 'SpecGenerated');
+    }
+
+    await this.dbClient.db.transaction(async (tx) => {
+      await tx
+        .update(workflowRuns)
+        .set({
+          specId,
+          specYaml,
+          currentStage: 'SpecGenerated',
+          updatedAt: sql`now()`,
+        })
+        .where(eq(workflowRuns.id, runId));
+
+      await tx.insert(workflowStageTransitions).values({
+        workflowRunId: runId,
+        fromStage,
+        toStage: 'SpecGenerated',
+        metadata: { specId },
+      });
+    });
   }
 
   async createTasks(
@@ -212,6 +259,8 @@ export class WorkflowRepository {
     status: string;
     output?: Record<string, unknown>;
     error?: string;
+    errorCategory?: ErrorCategory;
+    backoffDelayMs?: number;
     durationMs?: number;
   }): Promise<void> {
     await this.dbClient.db.insert(agentAttempts).values({
@@ -221,6 +270,8 @@ export class WorkflowRepository {
       status: params.status,
       output: params.output ?? null,
       error: params.error ?? null,
+      errorCategory: params.errorCategory ?? null,
+      backoffDelayMs: params.backoffDelayMs ?? null,
       durationMs: params.durationMs ?? null,
     });
   }
@@ -256,14 +307,44 @@ export class WorkflowRepository {
   }
 
   async markRunStatus(runId: string, status: 'completed' | 'failed' | 'dead_letter', reason?: string) {
-    await this.dbClient.db
-      .update(workflowRuns)
-      .set({
-        status,
-        deadLetterReason: reason ?? null,
-        updatedAt: sql`now()`,
-      })
-      .where(eq(workflowRuns.id, runId));
+    if (status === 'dead_letter') {
+      // Record the transition to DeadLetter stage atomically
+      const [current] = await this.dbClient.db
+        .select({ currentStage: workflowRuns.currentStage })
+        .from(workflowRuns)
+        .where(eq(workflowRuns.id, runId))
+        .limit(1);
+
+      const fromStage = current?.currentStage ?? 'TaskRequested';
+
+      await this.dbClient.db.transaction(async (tx) => {
+        await tx
+          .update(workflowRuns)
+          .set({
+            status,
+            currentStage: 'DeadLetter',
+            deadLetterReason: reason ?? null,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(workflowRuns.id, runId));
+
+        await tx.insert(workflowStageTransitions).values({
+          workflowRunId: runId,
+          fromStage,
+          toStage: 'DeadLetter',
+          metadata: { reason: reason ?? 'unknown' },
+        });
+      });
+    } else {
+      await this.dbClient.db
+        .update(workflowRuns)
+        .set({
+          status,
+          deadLetterReason: reason ?? null,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(workflowRuns.id, runId));
+    }
   }
 
   async countPendingTasks(runId: string): Promise<number> {
@@ -314,6 +395,18 @@ export class WorkflowRepository {
       .where(eq(artifacts.workflowRunId, runId))
       .orderBy(desc(artifacts.createdAt));
 
+    const transitions = await this.dbClient.db
+      .select({
+        id: workflowStageTransitions.id,
+        fromStage: workflowStageTransitions.fromStage,
+        toStage: workflowStageTransitions.toStage,
+        transitionedAt: workflowStageTransitions.transitionedAt,
+        metadata: workflowStageTransitions.metadata,
+      })
+      .from(workflowStageTransitions)
+      .where(eq(workflowStageTransitions.workflowRunId, runId))
+      .orderBy(asc(workflowStageTransitions.transitionedAt));
+
     return {
       id: run[0].id,
       status: run[0].status,
@@ -321,10 +414,12 @@ export class WorkflowRepository {
       issueNumber: run[0].issueNumber,
       prNumber: run[0].prNumber,
       specId: run[0].specId,
+      deadLetterReason: run[0].deadLetterReason,
       createdAt: run[0].createdAt,
       updatedAt: run[0].updatedAt,
       tasks: runTasks,
       artifacts: runArtifacts,
+      transitions,
     };
   }
 

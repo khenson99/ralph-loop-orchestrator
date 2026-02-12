@@ -11,6 +11,7 @@ import {
 } from '../lib/metrics.js';
 import { withRetry } from '../lib/retry.js';
 import type { WebhookEventEnvelope } from '../schemas/contracts.js';
+import { classifyError } from './stages.js';
 import type { WorkflowRepository } from '../state/repository.js';
 
 export type EnqueuePayload = {
@@ -72,7 +73,7 @@ export class OrchestratorService {
         externalTaskRef: item.envelope.event_id,
       });
       await this.repo.linkEventToRun(item.eventId, runId);
-      await this.repo.updateRunStage(runId, 'TaskRequested');
+      // createWorkflowRun already sets currentStage to 'TaskRequested'
 
       const issue = await this.github.getIssueContext(issueNumber);
       const baselineCommit = await this.github.getBranchSha(this.config.github.baseBranch);
@@ -161,6 +162,7 @@ export class OrchestratorService {
               attemptNumber: task.attemptCount + 1,
               status: 'failed',
               error: message,
+              errorCategory: classifyError(error),
               durationMs: Date.now() - taskStart,
             });
             await this.repo.markTaskResult(

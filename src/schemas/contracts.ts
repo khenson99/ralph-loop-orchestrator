@@ -96,6 +96,14 @@ export const MergeDecisionV1Schema = z.object({
   blocking_findings: z.array(z.string()).default([]),
 });
 
+export const StageTransitionSchema = z.object({
+  id: z.string(),
+  fromStage: z.string(),
+  toStage: z.string(),
+  transitionedAt: z.string().datetime(),
+  metadata: z.record(z.string(), z.unknown()),
+});
+
 export const RunResponseSchema = z.object({
   id: z.string(),
   status: z.string(),
@@ -103,6 +111,7 @@ export const RunResponseSchema = z.object({
   issueNumber: z.number().int().nullable(),
   prNumber: z.number().int().nullable(),
   specId: z.string().nullable(),
+  deadLetterReason: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   tasks: z.array(
@@ -120,6 +129,7 @@ export const RunResponseSchema = z.object({
       createdAt: z.string().datetime(),
     }),
   ),
+  transitions: z.array(StageTransitionSchema).default([]),
 });
 
 export const TaskResponseSchema = z.object({

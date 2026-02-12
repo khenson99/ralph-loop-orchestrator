@@ -30,10 +30,18 @@ export type AppServices = {
           issueNumber: number | null;
           prNumber: number | null;
           specId: string | null;
+          deadLetterReason: string | null;
           createdAt: Date;
           updatedAt: Date;
           tasks: Array<{ id: string; taskKey: string; status: string; attempts: number }>;
           artifacts: Array<{ id: string; kind: string; createdAt: Date }>;
+          transitions: Array<{
+            id: string;
+            fromStage: string;
+            toStage: string;
+            transitionedAt: Date;
+            metadata: Record<string, unknown>;
+          }>;
         }
       | null
     >;
@@ -105,6 +113,10 @@ export function buildServer(services: AppServices) {
       artifacts: run.artifacts.map((artifact) => ({
         ...artifact,
         createdAt: artifact.createdAt.toISOString(),
+      })),
+      transitions: run.transitions.map((t) => ({
+        ...t,
+        transitionedAt: t.transitionedAt.toISOString(),
       })),
     });
 
