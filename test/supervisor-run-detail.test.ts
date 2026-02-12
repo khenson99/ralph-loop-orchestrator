@@ -74,6 +74,7 @@ describe('supervisor run detail page', () => {
     expect(response.body).toContain('Logs Viewer');
     expect(response.body).toContain('Action Controls');
     expect(response.body).toContain('Approve PR');
+    expect(response.body).toContain('roleSelect');
     expect(response.body).toContain('/api/runs/');
     expect(response.body).toContain('/logs');
     expect(response.body).toContain('/api/runs/');
