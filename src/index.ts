@@ -29,6 +29,7 @@ async function main() {
     config,
     dbClient,
     workflowRepo: repo,
+    github,
     orchestrator,
     logger,
   });

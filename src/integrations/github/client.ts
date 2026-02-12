@@ -99,6 +99,34 @@ export class GitHubClient {
     return pr.data;
   }
 
+  async getPullRequestChecks(prNumber: number): Promise<{
+    prNumber: number;
+    headSha: string;
+    checks: Array<{
+      name: string;
+      status: string | null;
+      conclusion: string | null;
+    }>;
+  }> {
+    const pr = await this.getPullRequest(prNumber);
+    const checks = await this.octokit.rest.checks.listForRef({
+      owner: this.config.targetOwner,
+      repo: this.config.targetRepo,
+      ref: pr.head.sha,
+      per_page: 100,
+    });
+
+    return {
+      prNumber,
+      headSha: pr.head.sha,
+      checks: checks.data.check_runs.map((run) => ({
+        name: run.name,
+        status: run.status,
+        conclusion: run.conclusion,
+      })),
+    };
+  }
+
   async hasRequiredChecksPassed(prNumber: number, requiredChecks: string[]): Promise<boolean> {
     const pr = await this.getPullRequest(prNumber);
     const refs = [...new Set([pr.head.sha, pr.merge_commit_sha].filter((ref): ref is string => Boolean(ref)))];
