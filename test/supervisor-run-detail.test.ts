@@ -71,6 +71,9 @@ describe('supervisor run detail page', () => {
     expect(response.body).toContain('Run Summary');
     expect(response.body).toContain('Spec Viewer');
     expect(response.body).toContain('PR and CI Status');
+    expect(response.body).toContain('Logs Viewer');
+    expect(response.body).toContain('/api/runs/');
+    expect(response.body).toContain('/logs');
     expect(response.body).toContain('/api/runs/');
     expect(response.body).toContain('Back to Board');
 

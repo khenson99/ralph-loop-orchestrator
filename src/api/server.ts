@@ -97,6 +97,27 @@ export type AppServices = {
         }
       | null
     >;
+    listRunLogEntries?: (
+      runId: string,
+      options?: {
+        after?: string;
+        source?: string;
+        taskKey?: string;
+        status?: string;
+        query?: string;
+        limit?: number;
+      },
+    ) => Promise<
+      Array<{
+        id: string;
+        timestamp: string;
+        source: 'attempt' | 'artifact';
+        taskKey: string | null;
+        status: string | null;
+        message: string;
+        metadata: Record<string, unknown>;
+      }>
+    >;
   };
   github?: {
     getPullRequestChecks: (prNumber: number) => Promise<{
@@ -210,6 +231,39 @@ export function buildServer(services: AppServices) {
       prNumber: status.prNumber,
       headSha: status.headSha,
       checks: status.checks,
+    };
+  });
+
+  app.get('/api/runs/:runId/logs', async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    if (!services.workflowRepo.listRunLogEntries) {
+      return reply.status(501).send({ error: 'logs_not_supported' });
+    }
+
+    const query = request.query as {
+      after?: string;
+      source?: string;
+      taskKey?: string;
+      status?: string;
+      q?: string;
+      limit?: string;
+    };
+    const parsedLimit = query.limit ? Number.parseInt(query.limit, 10) : 200;
+    const limit = Number.isFinite(parsedLimit) ? parsedLimit : 200;
+
+    const entries = await services.workflowRepo.listRunLogEntries(runId, {
+      after: query.after,
+      source: query.source,
+      taskKey: query.taskKey,
+      status: query.status,
+      query: query.q,
+      limit,
+    });
+
+    return {
+      runId,
+      entries,
+      nextCursor: entries.length > 0 ? entries[entries.length - 1]?.timestamp : null,
     };
   });
 
@@ -370,6 +424,17 @@ export function buildServer(services: AppServices) {
     .grid { display: grid; gap: 10px; }
     .row { border: 1px solid #2a3f67; border-radius: 10px; padding: 8px 10px; background: #0f1a2f; }
     .row .meta { font-size: 12px; color: var(--muted); }
+    .logs-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .logs-toolbar input, .logs-toolbar select, .logs-toolbar button {
+      background: #0e1830;
+      color: var(--text);
+      border: 1px solid #2e446f;
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    #logs { max-height: 320px; overflow: auto; }
+    pre.log-message { white-space: pre-wrap; margin: 6px 0 0; font-size: 12px; color: #d7e7ff; }
     .error { color: #ffd1d1; background: #381d26; border: 1px solid #7f2338; padding: 10px; border-radius: 10px; }
     @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
   </style>
@@ -406,11 +471,26 @@ export function buildServer(services: AppServices) {
           <h3>PR and CI Status</h3>
           <div id="prStatus" class="grid"></div>
         </div>
+        <div class="panel">
+          <h3>Logs Viewer</h3>
+          <div class="logs-toolbar">
+            <input id="logQuery" placeholder="Filter text" />
+            <select id="logSource">
+              <option value="">All sources</option>
+              <option value="attempt">Attempts</option>
+              <option value="artifact">Artifacts</option>
+            </select>
+            <button id="logRefresh">Refresh</button>
+            <button id="logTail">Tail</button>
+          </div>
+          <div id="logs" class="grid"></div>
+        </div>
       </section>
     </div>
   </div>
   <script>
     const runId = ${JSON.stringify(runId)};
+    let logCursor = null;
     async function load() {
       const runResponse = await fetch('/api/runs/' + encodeURIComponent(runId));
       if (!runResponse.ok) {
@@ -425,6 +505,7 @@ export function buildServer(services: AppServices) {
       render(run);
       renderSpec(spec);
       renderPrStatus(pr);
+      await loadLogs(false);
     }
     function render(run) {
       document.getElementById('title').textContent = 'Run ' + run.id;
@@ -492,6 +573,47 @@ export function buildServer(services: AppServices) {
       }
       container.innerHTML = rows.join('');
     }
+    async function loadLogs(incremental) {
+      const queryEl = document.getElementById('logQuery');
+      const sourceEl = document.getElementById('logSource');
+      const params = new URLSearchParams();
+      if (queryEl.value) params.set('q', queryEl.value);
+      if (sourceEl.value) params.set('source', sourceEl.value);
+      if (incremental && logCursor) params.set('after', logCursor);
+      const response = await fetch('/api/runs/' + encodeURIComponent(runId) + '/logs?' + params.toString());
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      renderLogs(payload.entries || [], incremental);
+      logCursor = payload.nextCursor || logCursor;
+    }
+    function renderLogs(entries, append) {
+      const container = document.getElementById('logs');
+      if (!append) {
+        container.innerHTML = '';
+      }
+      for (const entry of entries) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const safe = String(entry.message || '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;');
+        row.innerHTML =
+          '<div><strong>' + entry.source + '</strong></div>' +
+          '<div class="meta">' + new Date(entry.timestamp).toLocaleString() + ' · task=' + (entry.taskKey || 'n/a') + ' · status=' + (entry.status || 'n/a') + '</div>' +
+          '<pre class="log-message">' + safe + '</pre>';
+        container.appendChild(row);
+      }
+    }
+    document.getElementById('logRefresh').addEventListener('click', async () => {
+      logCursor = null;
+      await loadLogs(false);
+    });
+    document.getElementById('logTail').addEventListener('click', async () => {
+      await loadLogs(true);
+    });
     load();
   </script>
 </body>
