@@ -24,16 +24,32 @@
       <section class="card">
         <h2>Inspect Run</h2>
         <label for="runId">Run ID</label>
-        <input id="runId" type="text" placeholder="93f9e447-8594-4d20-acc8-1413aa3f0651" />
-        <button id="fetchRun">Fetch Run</button>
+        <div class="row">
+          <select id="runId">
+            <option value="">Select a Run ID</option>
+          </select>
+          <button id="fetchRun">Fetch Run</button>
+        </div>
+        <div class="row row-secondary">
+          <input id="newRunId" type="text" placeholder="Add run ID to dropdown" />
+          <button id="addRunId">Add</button>
+        </div>
         <pre id="runResult" class="mono">No run loaded.</pre>
       </section>
 
       <section class="card">
         <h2>Inspect Task</h2>
         <label for="taskId">Task ID</label>
-        <input id="taskId" type="text" placeholder="3c7eb025-7b53-451f-a95e-e191bac11d76" />
-        <button id="fetchTask">Fetch Task</button>
+        <div class="row">
+          <select id="taskId">
+            <option value="">Select a Task ID</option>
+          </select>
+          <button id="fetchTask">Fetch Task</button>
+        </div>
+        <div class="row row-secondary">
+          <input id="newTaskId" type="text" placeholder="Add task ID to dropdown" />
+          <button id="addTaskId">Add</button>
+        </div>
         <pre id="taskResult" class="mono">No task loaded.</pre>
       </section>
 

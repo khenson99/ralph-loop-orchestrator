@@ -67,13 +67,23 @@ label {
   font-weight: 600;
 }
 
-input {
+.row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr auto;
+}
+
+.row-secondary {
+  margin-top: 8px;
+}
+
+input,
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
   padding: 10px;
-  margin-bottom: 10px;
   font-size: 0.95rem;
 }
 

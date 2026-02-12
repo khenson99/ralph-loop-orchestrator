@@ -51,6 +51,28 @@ export type AppServices = {
         }
       | null
     >;
+    listRecentRuns: (limit?: number) => Promise<
+      Array<{
+        id: string;
+        status: string;
+        currentStage: string;
+        issueNumber: number | null;
+        prNumber: number | null;
+        createdAt: Date;
+        updatedAt: Date;
+      }>
+    >;
+    listRecentTasks: (limit?: number) => Promise<
+      Array<{
+        id: string;
+        workflowRunId: string;
+        taskKey: string;
+        status: string;
+        attempts: number;
+        createdAt: Date;
+        updatedAt: Date;
+      }>
+    >;
     recordEventIfNew: (params: {
       deliveryId: string;
       eventType: string;
@@ -118,6 +140,24 @@ export function buildServer(services: AppServices) {
     return response;
   });
 
+  app.get('/api/runs', async (request) => {
+    const { limit } = request.query as { limit?: string };
+    const parsedLimit = Number.parseInt(limit ?? '50', 10);
+    const rows = await services.workflowRepo.listRecentRuns(Number.isFinite(parsedLimit) ? parsedLimit : 50);
+
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        currentStage: row.currentStage,
+        issueNumber: row.issueNumber,
+        prNumber: row.prNumber,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+    };
+  });
+
   app.get('/api/tasks/:taskId', async (request, reply) => {
     const { taskId } = request.params as { taskId: string };
     const task = await services.workflowRepo.getTaskView(taskId);
@@ -133,6 +173,24 @@ export function buildServer(services: AppServices) {
     });
 
     return response;
+  });
+
+  app.get('/api/tasks', async (request) => {
+    const { limit } = request.query as { limit?: string };
+    const parsedLimit = Number.parseInt(limit ?? '100', 10);
+    const rows = await services.workflowRepo.listRecentTasks(Number.isFinite(parsedLimit) ? parsedLimit : 100);
+
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        workflowRunId: row.workflowRunId,
+        taskKey: row.taskKey,
+        status: row.status,
+        attempts: row.attempts,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+    };
   });
 
   app.post('/webhooks/github', async (request, reply) => {

@@ -41,7 +41,9 @@ describe('github webhook route', () => {
       dbClient: { ready: async () => true },
       workflowRepo: {
         getRunView: async () => null,
+        listRecentRuns: async () => [],
         getTaskView: async () => null,
+        listRecentTasks: async () => [],
         recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
       },
       orchestrator: { enqueue },
@@ -82,7 +84,9 @@ describe('github webhook route', () => {
       dbClient: { ready: async () => true },
       workflowRepo: {
         getRunView: async () => null,
+        listRecentRuns: async () => [],
         getTaskView: async () => null,
+        listRecentTasks: async () => [],
         recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
       },
       orchestrator: { enqueue: vi.fn() },
@@ -121,7 +125,9 @@ describe('github webhook route', () => {
       dbClient: { ready: async () => true },
       workflowRepo: {
         getRunView: async () => null,
+        listRecentRuns: async () => [],
         getTaskView: async () => null,
+        listRecentTasks: async () => [],
         recordEventIfNew: async () => ({ inserted: false, eventId: 'evt-existing' }),
       },
       orchestrator: { enqueue },

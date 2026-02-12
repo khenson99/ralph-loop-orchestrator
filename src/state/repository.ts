@@ -350,4 +350,38 @@ export class WorkflowRepository {
       updatedAt: row[0].updatedAt,
     };
   }
+
+  async listRecentRuns(limit = 50) {
+    const cappedLimit = Math.max(1, Math.min(limit, 200));
+    return this.dbClient.db
+      .select({
+        id: workflowRuns.id,
+        status: workflowRuns.status,
+        currentStage: workflowRuns.currentStage,
+        issueNumber: workflowRuns.issueNumber,
+        prNumber: workflowRuns.prNumber,
+        createdAt: workflowRuns.createdAt,
+        updatedAt: workflowRuns.updatedAt,
+      })
+      .from(workflowRuns)
+      .orderBy(desc(workflowRuns.createdAt))
+      .limit(cappedLimit);
+  }
+
+  async listRecentTasks(limit = 100) {
+    const cappedLimit = Math.max(1, Math.min(limit, 300));
+    return this.dbClient.db
+      .select({
+        id: tasks.id,
+        workflowRunId: tasks.workflowRunId,
+        taskKey: tasks.taskKey,
+        status: tasks.status,
+        attempts: tasks.attemptCount,
+        createdAt: tasks.createdAt,
+        updatedAt: tasks.updatedAt,
+      })
+      .from(tasks)
+      .orderBy(desc(tasks.createdAt))
+      .limit(cappedLimit);
+  }
 }
