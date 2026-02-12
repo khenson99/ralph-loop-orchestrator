@@ -3,6 +3,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { AppConfig } from '../../config.js';
 import { AgentResultV1Schema, type AgentResultV1, type FormalSpecV1 } from '../../schemas/contracts.js';
 
+export class ClaudeStructuredOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ClaudeStructuredOutputError';
+  }
+}
+
 export class ClaudeAdapter {
   private readonly client: Anthropic;
   private readonly model: string;
@@ -62,20 +69,60 @@ Constraints:
       .join('\n')
       .trim();
 
-    const parsed = JSON.parse(extractJson(text));
-    return AgentResultV1Schema.parse(parsed);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(extractJson(text));
+    } catch (error) {
+      if (error instanceof ClaudeStructuredOutputError) {
+        throw error;
+      }
+      throw new ClaudeStructuredOutputError(
+        `Claude output for task ${params.taskId} was not valid JSON: ${
+          error instanceof Error ? error.message : 'unknown parse error'
+        }`,
+      );
+    }
+
+    const result = AgentResultV1Schema.safeParse(parsed);
+    if (!result.success) {
+      throw new ClaudeStructuredOutputError(
+        `Claude output for task ${params.taskId} violated AgentResultV1 schema: ${result.error.message}`,
+      );
+    }
+
+    if (result.data.task_id !== params.taskId) {
+      throw new ClaudeStructuredOutputError(
+        `Claude output task_id mismatch: expected ${params.taskId}, received ${result.data.task_id}`,
+      );
+    }
+
+    return result.data;
   }
 }
 
 function extractJson(text: string): string {
-  if (text.startsWith('{') && text.endsWith('}')) {
-    return text;
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new ClaudeStructuredOutputError('Claude output was empty');
   }
 
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) {
-    throw new Error('Claude output did not contain JSON object');
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    return trimmed;
   }
 
-  return match[0];
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced && fenced[1]) {
+    const inner = fenced[1].trim();
+    if (inner.startsWith('{') && inner.endsWith('}')) {
+      return inner;
+    }
+  }
+
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) {
+    throw new ClaudeStructuredOutputError('Claude output did not contain a JSON object');
+  }
+
+  return trimmed.slice(start, end + 1);
 }

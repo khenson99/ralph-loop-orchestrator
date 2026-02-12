@@ -52,6 +52,16 @@ export class InvalidTransitionError extends Error {
 export type ErrorCategory = 'transient' | 'deterministic' | 'unknown';
 
 export function classifyError(error: unknown): ErrorCategory {
+  // Claude structured-output contract failures are deterministic.
+  if (error instanceof Error && error.name === 'ClaudeStructuredOutputError') {
+    return 'deterministic';
+  }
+
+  // JSON parse errors are deterministic for LLM response contract violations.
+  if (error instanceof SyntaxError && error.message.toLowerCase().includes('json')) {
+    return 'deterministic';
+  }
+
   // ZodError is always deterministic — schema violations are not recoverable by retry
   if (error instanceof Error && error.name === 'ZodError') {
     return 'deterministic';
