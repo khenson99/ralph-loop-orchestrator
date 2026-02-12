@@ -407,6 +407,56 @@ export function buildServer(services: AppServices) {
     };
   });
 
+  app.get('/api/runs/:runId/audit-export', async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    const run = await services.workflowRepo.getRunView(runId);
+    if (!run) {
+      return reply.status(404).send({ error: 'run_not_found' });
+    }
+
+    const spec = services.workflowRepo.getLatestArtifactByKind
+      ? await services.workflowRepo.getLatestArtifactByKind(runId, 'formal_spec')
+      : null;
+    const logs = services.workflowRepo.listRunLogEntries
+      ? await services.workflowRepo.listRunLogEntries(runId, { limit: 500 })
+      : [];
+
+    const prStatus =
+      run.prNumber && services.github
+        ? await services.github.getPullRequestChecks(run.prNumber)
+        : null;
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      run: {
+        ...run,
+        createdAt: run.createdAt.toISOString(),
+        updatedAt: run.updatedAt.toISOString(),
+        artifacts: run.artifacts.map((item) => ({
+          ...item,
+          createdAt: item.createdAt.toISOString(),
+        })),
+        transitions: run.transitions.map((item) => ({
+          ...item,
+          transitionedAt: item.transitionedAt.toISOString(),
+        })),
+      },
+      spec: spec
+        ? {
+            ...spec,
+            createdAt: spec.createdAt.toISOString(),
+          }
+        : null,
+      prStatus,
+      transcript: logs.filter((entry) => entry.source === 'attempt'),
+      logs,
+    };
+
+    reply.header('content-type', 'application/json');
+    reply.header('content-disposition', `attachment; filename="run-${runId}-audit.json"`);
+    return payload;
+  });
+
   app.get('/supervisor', async (_, reply) => {
     reply.type('text/html');
     return `<!doctype html>
@@ -670,6 +720,11 @@ export function buildServer(services: AppServices) {
           <div id="logs" class="grid"></div>
         </div>
         <div class="panel">
+          <h3>Agent Transcript (Read-only)</h3>
+          <button id="auditExport" aria-label="Export audit bundle">Export Audit JSON</button>
+          <div id="transcript" class="grid" style="margin-top: 8px;"></div>
+        </div>
+        <div class="panel">
           <h3>Action Controls</h3>
           <div class="grid">
             <div class="logs-toolbar">
@@ -815,6 +870,29 @@ export function buildServer(services: AppServices) {
           '<pre class="log-message">' + safe + '</pre>';
         container.appendChild(row);
       }
+      renderTranscript(entries);
+    }
+    function renderTranscript(entries) {
+      const container = document.getElementById('transcript');
+      container.innerHTML = '';
+      const attempts = (entries || []).filter((entry) => entry.source === 'attempt');
+      if (!attempts.length) {
+        container.innerHTML = '<div class="row"><div class="meta">No transcript entries yet.</div></div>';
+        return;
+      }
+      for (const entry of attempts) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const safe = String(entry.message || '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;');
+        row.innerHTML =
+          '<div><strong>' + (entry.taskKey || 'task') + '</strong></div>' +
+          '<div class="meta">' + new Date(entry.timestamp).toLocaleString() + ' · status=' + (entry.status || 'n/a') + '</div>' +
+          '<pre class="log-message">' + safe + '</pre>';
+        container.appendChild(row);
+      }
     }
     document.getElementById('logRefresh').addEventListener('click', async () => {
       logCursor = null;
@@ -857,6 +935,22 @@ export function buildServer(services: AppServices) {
     document.getElementById('actionApprove').addEventListener('click', () => sendAction('approve'));
     document.getElementById('actionChanges').addEventListener('click', () => sendAction('request_changes'));
     document.getElementById('actionBlock').addEventListener('click', () => sendAction('block'));
+    document.getElementById('auditExport').addEventListener('click', async () => {
+      const response = await fetch('/api/runs/' + encodeURIComponent(runId) + '/audit-export');
+      if (!response.ok) {
+        document.getElementById('actionResult').textContent = 'Audit export failed.';
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'run-' + runId + '-audit.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
     function syncActionAvailability() {
       const role = document.getElementById('roleSelect').value || 'viewer';
       const approveBtn = document.getElementById('actionApprove');

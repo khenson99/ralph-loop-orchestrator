@@ -72,6 +72,8 @@ describe('supervisor run detail page', () => {
     expect(response.body).toContain('Spec Viewer');
     expect(response.body).toContain('PR and CI Status');
     expect(response.body).toContain('Logs Viewer');
+    expect(response.body).toContain('Agent Transcript (Read-only)');
+    expect(response.body).toContain('auditExport');
     expect(response.body).toContain('Action Controls');
     expect(response.body).toContain('Approve PR');
     expect(response.body).toContain('roleSelect');
