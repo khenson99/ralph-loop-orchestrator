@@ -68,6 +68,8 @@ describe('observability contract', () => {
     expect(response.body).toContain('ralph_workflow_run_duration_ms');
     expect(response.body).toContain('ralph_webhook_events_total');
     expect(response.body).toContain('ralph_retries_total');
+    expect(response.body).toContain('ralph_orchestration_boundary_calls_total');
+    expect(response.body).toContain('ralph_orchestration_boundary_duration_ms');
 
     await app.close();
   });

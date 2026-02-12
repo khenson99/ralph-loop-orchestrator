@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../src/config.js';
 import { CodexAdapter } from '../src/integrations/openai/codex.js';
 import { createLogger } from '../src/lib/logger.js';
+import { metricsRegistry } from '../src/lib/metrics.js';
 import { OrchestratorService, type EnqueuePayload } from '../src/orchestrator/service.js';
 import { buildServer } from '../src/api/server.js';
 
@@ -193,6 +194,11 @@ describe('orchestrator E2E flow: webhook -> spec -> PR/checks -> merge decision'
       expect.objectContaining({ decision: 'approve' }),
     );
     expect(repo.markRunStatus).toHaveBeenCalledWith(expect.any(String), 'completed');
+    const metrics = await metricsRegistry.metrics();
+    expect(metrics).toContain('boundary="github.get_issue_context",result="success"');
+    expect(metrics).toContain('boundary="codex.generate_formal_spec",result="success"');
+    expect(metrics).toContain('boundary="claude.execute_subtask",result="success"');
+    expect(metrics).toContain('boundary="repo.update_run_stage",result="success"');
 
     await app.close();
   });
