@@ -134,7 +134,13 @@ export function buildServer(services: AppServices) {
     const signature = String(request.headers['x-hub-signature-256'] ?? '');
     const rawBody = request.body;
 
-    if (!eventName || !deliveryId || !signature || typeof rawBody !== 'string') {
+    // Reject requests with missing signature explicitly as 401
+    if (!signature) {
+      webhookEventsTotal.inc({ event_type: eventName || 'unknown', result: 'missing_signature' });
+      return reply.status(401).send({ error: 'missing_signature' });
+    }
+
+    if (!eventName || !deliveryId || typeof rawBody !== 'string') {
       webhookEventsTotal.inc({ event_type: eventName || 'unknown', result: 'bad_request' });
       return reply.status(400).send({ error: 'missing_required_headers_or_body' });
     }
@@ -185,7 +191,7 @@ export function buildServer(services: AppServices) {
 
     if (!eventResult.inserted) {
       webhookEventsTotal.inc({ event_type: eventName, result: 'duplicate' });
-      return reply.status(202).send({ accepted: false, duplicate: true });
+      return reply.status(200).send({ accepted: false, duplicate: true });
     }
 
     services.orchestrator.enqueue({
