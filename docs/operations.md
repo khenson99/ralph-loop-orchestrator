@@ -18,6 +18,7 @@ Set required variables from `.env.example`.
 - Health:
   - `GET /healthz`
   - `GET /readyz`
+- Runbook: see `docs/observability-runbook.md` for signal contract and incident checks.
 
 ## Security checks
 
