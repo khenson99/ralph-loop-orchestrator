@@ -1,6 +1,9 @@
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 
+import yaml from 'js-yaml';
+
 import type { AgentResultV1, MergeDecisionV1 } from '../schemas/contracts.js';
+import { FormalSpecV1Schema } from '../schemas/contracts.js';
 import { InvalidTransitionError, isValidTransition } from '../orchestrator/stages.js';
 import type { ErrorCategory } from '../orchestrator/stages.js';
 import type { DatabaseClient } from './db.js';
@@ -135,6 +138,10 @@ export class WorkflowRepository {
   }
 
   async storeSpec(runId: string, specId: string, specYaml: string): Promise<void> {
+    // Defense-in-depth: round-trip validate the YAML against FormalSpecV1Schema
+    const parsed = yaml.load(specYaml);
+    FormalSpecV1Schema.parse(parsed);
+
     const [current] = await this.dbClient.db
       .select({ currentStage: workflowRuns.currentStage })
       .from(workflowRuns)
@@ -316,6 +323,11 @@ export class WorkflowRepository {
         .limit(1);
 
       const fromStage = current?.currentStage ?? 'TaskRequested';
+
+      // Validate transition the same way updateRunStage does
+      if (!isValidTransition(fromStage, 'DeadLetter')) {
+        throw new InvalidTransitionError(fromStage, 'DeadLetter');
+      }
 
       await this.dbClient.db.transaction(async (tx) => {
         await tx

@@ -9,7 +9,7 @@ import {
   workflowRunDurationMs,
   workflowRunsTotal,
 } from '../lib/metrics.js';
-import { withRetry } from '../lib/retry.js';
+import { RetryExhaustedError, withRetry } from '../lib/retry.js';
 import type { WebhookEventEnvelope } from '../schemas/contracts.js';
 import { classifyError } from './stages.js';
 import type { WorkflowRepository } from '../state/repository.js';
@@ -78,7 +78,7 @@ export class OrchestratorService {
       const issue = await this.github.getIssueContext(issueNumber);
       const baselineCommit = await this.github.getBranchSha(this.config.github.baseBranch);
 
-      const specResult = await withRetry(
+      const specRetry = await withRetry(
         async (attempt) => {
           if (attempt > 1) {
             retriesTotal.inc({ operation: 'codex.generateFormalSpec' });
@@ -91,8 +91,9 @@ export class OrchestratorService {
             baselineCommit,
           });
         },
-        { retries: 2, baseDelayMs: 500, maxDelayMs: 2500 },
+        { retries: 2, baseDelayMs: 500, maxDelayMs: 2500, classifyError },
       );
+      const specResult = specRetry.value;
 
       await this.repo.storeSpec(runId, specResult.spec.spec_id, specResult.rawYaml);
       await this.repo.addArtifact({
@@ -121,7 +122,7 @@ export class OrchestratorService {
           const taskStart = Date.now();
 
           try {
-            const result = await withRetry(
+            const taskRetry = await withRetry(
               async (attempt) => {
                 if (attempt > 1) {
                   retriesTotal.inc({ operation: 'claude.executeSubtask' });
@@ -134,8 +135,9 @@ export class OrchestratorService {
                   spec: specResult.spec,
                 });
               },
-              { retries: 2, baseDelayMs: 1000, maxDelayMs: 6000 },
+              { retries: 2, baseDelayMs: 1000, maxDelayMs: 6000, classifyError },
             );
+            const result = taskRetry.value;
 
             const taskStatus = result.status === 'completed' ? 'completed' : result.status;
             await this.repo.markTaskResult(task.id, result, taskStatus);
@@ -145,6 +147,7 @@ export class OrchestratorService {
               attemptNumber: task.attemptCount + 1,
               status: taskStatus,
               output: result as unknown as Record<string, unknown>,
+              backoffDelayMs: taskRetry.lastBackoffMs ?? undefined,
               durationMs: Date.now() - taskStart,
             });
             await this.repo.addArtifact({
@@ -156,13 +159,23 @@ export class OrchestratorService {
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : 'unknown task failure';
+            const retryMeta =
+              error instanceof RetryExhaustedError
+                ? {
+                    attempts: error.attempts,
+                    backoffDelayMs: error.lastBackoffMs ?? undefined,
+                    cause: error.lastError,
+                  }
+                : { attempts: 1, backoffDelayMs: undefined, cause: error };
+
             await this.repo.addAgentAttempt({
               taskId: task.id,
               agentRole: task.ownerRole,
-              attemptNumber: task.attemptCount + 1,
+              attemptNumber: task.attemptCount + retryMeta.attempts,
               status: 'failed',
               error: message,
-              errorCategory: classifyError(error),
+              errorCategory: classifyError(retryMeta.cause),
+              backoffDelayMs: retryMeta.backoffDelayMs,
               durationMs: Date.now() - taskStart,
             });
             await this.repo.markTaskResult(
