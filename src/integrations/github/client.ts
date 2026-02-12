@@ -526,7 +526,7 @@ export class GitHubClient {
     params?: { limit?: number },
   ): Promise<ProjectTodoIssue[]> {
     const repo = this.resolveRepo(ref);
-    const limit = Math.max(1, Math.min(params?.limit ?? 200, 500));
+    const limit = Math.max(1, Math.min(params?.limit ?? 100, 100));
 
     type ProjectItem = {
       id: string;

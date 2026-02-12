@@ -513,7 +513,7 @@ async function loadTodosForSelectedProject() {
   state.intake.selectedProjectNumber = projectNumber;
   const [owner, repo] = repoFullName.split('/');
   const response = await apiClient.get(
-    `/api/v1/github/project-todos?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&project_number=${projectNumber}&limit=250`,
+    `/api/v1/github/project-todos?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&project_number=${projectNumber}&limit=100`,
   );
   state.intake.todos = Array.isArray(response.items) ? response.items : [];
   renderRepoIntakeControls();

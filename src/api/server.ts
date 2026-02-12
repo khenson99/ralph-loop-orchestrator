@@ -532,12 +532,7 @@ export function buildServer(services: AppServices) {
 
   app.get('/app', async (_, reply) => {
     if (services.config.uiUnifiedConsole) {
-      const html = readUnifiedFrontendAsset('index.html');
-      if (!html) {
-        return reply.status(500).send({ error: 'unified_frontend_missing' });
-      }
-      reply.type('text/html; charset=utf-8');
-      return html;
+      return reply.redirect('/app/index.html');
     }
 
     reply.type('text/html; charset=utf-8');
@@ -910,12 +905,12 @@ export function buildServer(services: AppServices) {
       return reply.status(400).send({ error: 'owner_repo_and_project_number_required' });
     }
 
-    const parsedLimit = Number.parseInt(query.limit ?? '250', 10);
+    const parsedLimit = Number.parseInt(query.limit ?? '100', 10);
     const todos = await services.github.listProjectTodoIssues(
       { owner, repo },
       projectNumber,
       {
-        limit: Number.isFinite(parsedLimit) ? parsedLimit : 250,
+        limit: Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 100)) : 100,
       },
     );
 

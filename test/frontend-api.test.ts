@@ -429,10 +429,17 @@ describe('frontend API routes', () => {
       url: '/app',
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['content-type']).toContain('text/html');
-    expect(response.body).toContain('<!doctype html>');
-    expect(response.body).toContain('World-Class Orchestrator Console');
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe('/app/index.html');
+
+    const indexResponse = await app.inject({
+      method: 'GET',
+      url: '/app/index.html',
+    });
+    expect(indexResponse.statusCode).toBe(200);
+    expect(indexResponse.headers['content-type']).toContain('text/html');
+    expect(indexResponse.body).toContain('<!doctype html>');
+    expect(indexResponse.body).toContain('World-Class Orchestrator Console');
 
     const scriptResponse = await app.inject({
       method: 'GET',
