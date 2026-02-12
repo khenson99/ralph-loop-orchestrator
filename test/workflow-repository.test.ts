@@ -75,7 +75,8 @@ describe('WorkflowRepository transaction and retry metadata behavior', () => {
       agentRole: 'backend',
       attemptNumber: 3,
       status: 'failed',
-      error: 'timeout',
+      output: { token: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456' },
+      error: 'timeout token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456',
       errorCategory: 'transient',
       backoffDelayMs: 500,
       durationMs: 1234,
@@ -88,6 +89,31 @@ describe('WorkflowRepository transaction and retry metadata behavior', () => {
         attemptNumber: 3,
         errorCategory: 'transient',
         backoffDelayMs: 500,
+        output: { token: '[REDACTED]' },
+        error: 'timeout token=[REDACTED]',
+      }),
+    );
+  });
+
+  it('redacts sensitive values in artifact content and metadata', async () => {
+    const insertValues = vi.fn().mockResolvedValue(undefined);
+    const insert = vi.fn(() => ({ values: insertValues }));
+    const db = { insert };
+
+    const repo = new WorkflowRepository({ db } as never);
+    await repo.addArtifact({
+      workflowRunId: 'run_1',
+      kind: 'review_summary',
+      content: 'api_key=sk-abcdefghijklmnopqrstuvwxyz123456',
+      metadata: {
+        secret: 'ghs_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456',
+      },
+    });
+
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: 'api_key=[REDACTED]',
+        metadata: { secret: '[REDACTED]' },
       }),
     );
   });

@@ -9,6 +9,7 @@ import {
   workflowRunDurationMs,
   workflowRunsTotal,
 } from '../lib/metrics.js';
+import { redactSecretsInText } from '../lib/redaction.js';
 import { RetryExhaustedError, withRetry } from '../lib/retry.js';
 import type { WebhookEventEnvelope } from '../schemas/contracts.js';
 import { classifyError } from './stages.js';
@@ -235,10 +236,13 @@ export class OrchestratorService {
       await this.repo.addMergeDecision(runId, prNumber, mergeDecision);
 
       if (prNumber !== null) {
+        const safeRationale = redactSecretsInText(mergeDecision.rationale);
+        const safeFindings = mergeDecision.blocking_findings.map((item) => redactSecretsInText(item));
+
         if (mergeDecision.decision === 'approve') {
           await this.github.approvePullRequest(
             prNumber,
-            `Automated review approval for run ${runId}.\n\n${mergeDecision.rationale}`,
+            `Automated review approval for run ${runId}.\n\n${safeRationale}`,
           );
 
           if (this.config.autoMergeEnabled && checksPassed) {
@@ -247,7 +251,7 @@ export class OrchestratorService {
         } else if (mergeDecision.decision === 'request_changes' || mergeDecision.decision === 'block') {
           await this.github.requestChanges(
             prNumber,
-            `Automated review requests changes for run ${runId}.\n\n${mergeDecision.rationale}\n\n${mergeDecision.blocking_findings
+            `Automated review requests changes for run ${runId}.\n\n${safeRationale}\n\n${safeFindings
               .map((f) => `- ${f}`)
               .join('\n')}`,
           );
@@ -270,10 +274,11 @@ export class OrchestratorService {
 
       await this.repo.markEventProcessed(item.eventId);
     } catch (error) {
-      const message = formatDeadLetterReason(error);
+      const message = redactSecretsInText(formatDeadLetterReason(error));
       this.logger.error(
         {
-          err: error,
+          error_name: error instanceof Error ? error.name : 'unknown_error',
+          error_message: message,
           event_id: item.envelope.event_id,
           run_id: runId,
           task_id: issueNumber,
