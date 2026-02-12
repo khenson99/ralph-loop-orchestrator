@@ -171,8 +171,12 @@ export class OrchestratorService {
             await this.repo.addAgentAttempt({
               taskId: task.id,
               agentRole: task.ownerRole,
-              attemptNumber: task.attemptCount + retryMeta.attempts,
+              attemptNumber: task.attemptCount + 1,
               status: 'failed',
+              output: {
+                retryAttempts: retryMeta.attempts,
+                lastBackoffMs: retryMeta.backoffDelayMs ?? null,
+              },
               error: message,
               errorCategory: classifyError(retryMeta.cause),
               backoffDelayMs: retryMeta.backoffDelayMs,
