@@ -1,3 +1,5 @@
+import { RetryExhaustedError } from '../lib/retry.js';
+
 /**
  * Workflow stage definitions and valid transition map.
  *
@@ -52,30 +54,37 @@ export class InvalidTransitionError extends Error {
 export type ErrorCategory = 'transient' | 'deterministic' | 'unknown';
 
 export function classifyError(error: unknown): ErrorCategory {
+  const candidate = unwrapRetryError(error);
+
   // Claude structured-output contract failures are deterministic.
-  if (error instanceof Error && error.name === 'ClaudeStructuredOutputError') {
+  if (candidate instanceof Error && candidate.name === 'ClaudeStructuredOutputError') {
     return 'deterministic';
   }
 
   // JSON parse errors are deterministic for LLM response contract violations.
-  if (error instanceof SyntaxError && error.message.toLowerCase().includes('json')) {
+  if (candidate instanceof SyntaxError && candidate.message.toLowerCase().includes('json')) {
     return 'deterministic';
   }
 
   // ZodError is always deterministic — schema violations are not recoverable by retry
-  if (error instanceof Error && error.name === 'ZodError') {
+  if (candidate instanceof Error && candidate.name === 'ZodError') {
     return 'deterministic';
   }
 
-  if (error instanceof Error) {
-    const msg = error.message.toLowerCase();
+  if (candidate instanceof Error) {
+    const msg = candidate.message.toLowerCase();
     // Network / timeout / rate-limit errors are transient
     if (
       msg.includes('timeout') ||
       msg.includes('econnreset') ||
       msg.includes('econnrefused') ||
+      msg.includes('eai_again') ||
+      msg.includes('enotfound') ||
       msg.includes('rate limit') ||
+      msg.includes('408') ||
       msg.includes('429') ||
+      msg.includes('500') ||
+      msg.includes('504') ||
       msg.includes('503') ||
       msg.includes('502') ||
       msg.includes('socket hang up')
@@ -88,6 +97,8 @@ export function classifyError(error: unknown): ErrorCategory {
       msg.includes('unauthorized') ||
       msg.includes('forbidden') ||
       msg.includes('not found') ||
+      msg.includes('422') ||
+      msg.includes('409') ||
       msg.includes('400') ||
       msg.includes('401') ||
       msg.includes('403') ||
@@ -97,4 +108,11 @@ export function classifyError(error: unknown): ErrorCategory {
     }
   }
   return 'unknown';
+}
+
+function unwrapRetryError(error: unknown): unknown {
+  if (error instanceof RetryExhaustedError) {
+    return unwrapRetryError(error.lastError);
+  }
+  return error;
 }
