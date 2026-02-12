@@ -190,6 +190,63 @@ export function buildServer(services: AppServices) {
     };
   });
 
+  app.get('/api/board/stream', async (request, reply) => {
+    if (!services.workflowRepo.listBoardCards) {
+      return reply.status(501).send({ error: 'board_stream_not_supported' });
+    }
+
+    const query = request.query as { lastEventId?: string; once?: string };
+    const once = String(query.once ?? '').toLowerCase() === 'true';
+    const incomingLastEventId =
+      String(request.headers['last-event-id'] ?? query.lastEventId ?? '').trim() || null;
+
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+
+    let closed = false;
+    const writeSnapshot = async () => {
+      if (closed) {
+        return;
+      }
+      const cards = await services.workflowRepo.listBoardCards?.(200);
+      const projected = projectBoardCards(cards ?? [], {});
+      const eventId = Date.now().toString();
+      const payload = JSON.stringify({
+        lanes: BOARD_LANES,
+        cards: projected,
+        grouped: groupCardsByLane(projected),
+        generatedAt: new Date().toISOString(),
+        fromLastEventId: incomingLastEventId,
+      });
+
+      reply.raw.write(`id: ${eventId}\n`);
+      reply.raw.write('event: board.snapshot\n');
+      reply.raw.write(`data: ${payload}\n\n`);
+    };
+
+    await writeSnapshot();
+    if (once) {
+      reply.raw.end();
+      return reply;
+    }
+
+    reply.raw.write('retry: 3000\n\n');
+    const timer = setInterval(() => {
+      void writeSnapshot();
+    }, 5000);
+
+    request.raw.on('close', () => {
+      closed = true;
+      clearInterval(timer);
+    });
+
+    return reply;
+  });
+
   app.get('/api/runs/:runId/spec', async (request, reply) => {
     const { runId } = request.params as { runId: string };
     if (!services.workflowRepo.getLatestArtifactByKind) {
@@ -411,6 +468,8 @@ export function buildServer(services: AppServices) {
     const laneEl = document.getElementById('lane');
     const statusEl = document.getElementById('status');
     const refreshEl = document.getElementById('refresh');
+    let streamLastEventId = '';
+    let streamRef = null;
     async function load() {
       const params = new URLSearchParams();
       if (qEl.value) params.set('q', qEl.value);
@@ -455,6 +514,27 @@ export function buildServer(services: AppServices) {
     laneEl.addEventListener('change', () => load());
     statusEl.addEventListener('change', () => load());
     refreshEl.addEventListener('click', () => load());
+    function connectStream() {
+      const params = new URLSearchParams();
+      if (streamLastEventId) {
+        params.set('lastEventId', streamLastEventId);
+      }
+      const url = '/api/board/stream' + (params.toString() ? '?' + params.toString() : '');
+      streamRef = new EventSource(url);
+      streamRef.addEventListener('board.snapshot', (event) => {
+        if (event.lastEventId) {
+          streamLastEventId = event.lastEventId;
+        }
+        load();
+      });
+      streamRef.onerror = () => {
+        if (streamRef) {
+          streamRef.close();
+        }
+        setTimeout(connectStream, 2000);
+      };
+    }
+    connectStream();
     load();
   </script>
 </body>
