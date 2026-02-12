@@ -153,15 +153,20 @@ baseline_commit: ${params.baselineCommit}
     reviewSummary: string;
     requiredChecksPassed: boolean;
   }): Promise<MergeDecisionV1> {
+    if (!params.requiredChecksPassed) {
+      return MergeDecisionV1Schema.parse({
+        decision: 'request_changes',
+        rationale:
+          'Required checks gate failed: merge approval is blocked until all required checks pass.',
+        blocking_findings: ['One or more required checks are pending or failing.'],
+      });
+    }
+
     if (this.dryRun || !this.hasApiKey) {
       return MergeDecisionV1Schema.parse({
-        decision: params.requiredChecksPassed ? 'approve' : 'request_changes',
-        rationale: params.requiredChecksPassed
-          ? 'Required checks passed in dry-run mode.'
-          : 'Required checks have not passed yet.',
-        blocking_findings: params.requiredChecksPassed
-          ? []
-          : ['One or more required checks are pending or failing.'],
+        decision: 'approve',
+        rationale: 'Required checks passed in dry-run mode.',
+        blocking_findings: [],
       });
     }
 
