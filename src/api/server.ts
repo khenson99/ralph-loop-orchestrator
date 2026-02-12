@@ -9,7 +9,13 @@ import {
   mapGithubWebhookToEnvelope,
   verifyGitHubSignature,
 } from '../integrations/github/webhook.js';
-import { metricsRegistry, webhookEventsTotal } from '../lib/metrics.js';
+import {
+  metricsRegistry,
+  orchestrationBoundaryCallsTotal,
+  orchestrationBoundaryDurationMs,
+  webhookEventsTotal,
+} from '../lib/metrics.js';
+import { withSpan } from '../lib/telemetry.js';
 import {
   RunResponseSchema,
   TaskResponseSchema,
@@ -1027,73 +1033,157 @@ export function buildServer(services: AppServices) {
     const signature = String(request.headers['x-hub-signature-256'] ?? '');
     const rawBody = request.body;
 
-    // Reject requests with missing signature explicitly as 401
-    if (!signature) {
-      webhookEventsTotal.inc({ event_type: eventName || 'unknown', result: 'missing_signature' });
-      return reply.status(401).send({ error: 'missing_signature' });
-    }
+    const observeBoundary = async <T>(
+      boundary: string,
+      context: { issueNumber?: number },
+      fn: () => Promise<T>,
+    ): Promise<T> => {
+      const startedAt = Date.now();
+      return withSpan(
+        `webhook.${boundary}`,
+        {
+          tracerName: 'ralph-loop-orchestrator.api',
+          attributes: {
+            boundary,
+            event_type: eventName || 'unknown',
+            delivery_id: deliveryId || 'unknown',
+            issue_number: context.issueNumber ?? '',
+          },
+        },
+        async () => {
+          try {
+            const result = await fn();
+            orchestrationBoundaryCallsTotal.inc({ boundary: `webhook.${boundary}`, result: 'success' });
+            return result;
+          } catch (error) {
+            orchestrationBoundaryCallsTotal.inc({ boundary: `webhook.${boundary}`, result: 'error' });
+            app.log.warn(
+              {
+                boundary: `webhook.${boundary}`,
+                delivery_id: deliveryId,
+                event_type: eventName,
+                issue_number: context.issueNumber,
+                err: error,
+              },
+              'Webhook boundary failed',
+            );
+            throw error;
+          } finally {
+            orchestrationBoundaryDurationMs.observe(
+              { boundary: `webhook.${boundary}` },
+              Date.now() - startedAt,
+            );
+          }
+        },
+      );
+    };
 
-    if (!eventName || !deliveryId || typeof rawBody !== 'string') {
-      webhookEventsTotal.inc({ event_type: eventName || 'unknown', result: 'bad_request' });
-      return reply.status(400).send({ error: 'missing_required_headers_or_body' });
-    }
+    return withSpan(
+      'webhook.ingest',
+      {
+        tracerName: 'ralph-loop-orchestrator.api',
+        attributes: {
+          event_type: eventName || 'unknown',
+          delivery_id: deliveryId || 'unknown',
+        },
+      },
+      async () => {
+        // Reject requests with missing signature explicitly as 401
+        if (!signature) {
+          webhookEventsTotal.inc({ event_type: eventName || 'unknown', result: 'missing_signature' });
+          return reply.status(401).send({ error: 'missing_signature' });
+        }
 
-    const valid = await verifyGitHubSignature({
-      secret: services.config.github.webhookSecret,
-      payload: rawBody,
-      signature,
-    });
+        if (!eventName || !deliveryId || typeof rawBody !== 'string') {
+          webhookEventsTotal.inc({ event_type: eventName || 'unknown', result: 'bad_request' });
+          return reply.status(400).send({ error: 'missing_required_headers_or_body' });
+        }
 
-    if (!valid) {
-      webhookEventsTotal.inc({ event_type: eventName, result: 'invalid_signature' });
-      return reply.status(401).send({ error: 'invalid_signature' });
-    }
+        const valid = await observeBoundary('verify_signature', {}, () =>
+          verifyGitHubSignature({
+            secret: services.config.github.webhookSecret,
+            payload: rawBody,
+            signature,
+          }),
+        );
 
-    let payload: Record<string, unknown>;
-    try {
-      payload = JSON.parse(rawBody) as Record<string, unknown>;
-    } catch {
-      webhookEventsTotal.inc({ event_type: eventName, result: 'invalid_json' });
-      return reply.status(400).send({ error: 'invalid_json' });
-    }
+        if (!valid) {
+          webhookEventsTotal.inc({ event_type: eventName, result: 'invalid_signature' });
+          return reply.status(401).send({ error: 'invalid_signature' });
+        }
 
-    if (!isActionableEvent(eventName, payload)) {
-      webhookEventsTotal.inc({ event_type: eventName, result: 'ignored' });
-      return reply.status(202).send({ accepted: false, reason: 'event_not_actionable' });
-    }
+        let payload: Record<string, unknown>;
+        try {
+          payload = await observeBoundary('parse_payload', {}, async () =>
+            JSON.parse(rawBody) as Record<string, unknown>,
+          );
+        } catch {
+          webhookEventsTotal.inc({ event_type: eventName, result: 'invalid_json' });
+          return reply.status(400).send({ error: 'invalid_json' });
+        }
 
-    const issueNumber = extractIssueNumber(payload);
-    if (issueNumber === null) {
-      webhookEventsTotal.inc({ event_type: eventName, result: 'missing_issue_number' });
-      return reply.status(202).send({ accepted: false, reason: 'missing_issue_number' });
-    }
+        if (!isActionableEvent(eventName, payload)) {
+          webhookEventsTotal.inc({ event_type: eventName, result: 'ignored' });
+          return reply.status(202).send({ accepted: false, reason: 'event_not_actionable' });
+        }
 
-    const envelope = mapGithubWebhookToEnvelope({
-      eventName,
-      deliveryId,
-      payload,
-    });
+        const issueNumber = extractIssueNumber(payload);
+        if (issueNumber === null) {
+          webhookEventsTotal.inc({ event_type: eventName, result: 'missing_issue_number' });
+          return reply.status(202).send({ accepted: false, reason: 'missing_issue_number' });
+        }
 
-    const eventResult = await services.workflowRepo.recordEventIfNew({
-      deliveryId,
-      eventType: envelope.event_type,
-      sourceOwner: services.config.github.targetOwner,
-      sourceRepo: services.config.github.targetRepo,
-      payload,
-    });
+        const envelope = mapGithubWebhookToEnvelope({
+          eventName,
+          deliveryId,
+          payload,
+        });
 
-    if (!eventResult.inserted) {
-      webhookEventsTotal.inc({ event_type: eventName, result: 'duplicate' });
-      return reply.status(200).send({ accepted: false, duplicate: true });
-    }
+        const eventResult = await observeBoundary('record_event', { issueNumber }, () =>
+          services.workflowRepo.recordEventIfNew({
+            deliveryId,
+            eventType: envelope.event_type,
+            sourceOwner: services.config.github.targetOwner,
+            sourceRepo: services.config.github.targetRepo,
+            payload,
+          }),
+        );
 
-    services.orchestrator.enqueue({
-      eventId: eventResult.eventId,
-      envelope,
-    });
+        if (!eventResult.inserted) {
+          webhookEventsTotal.inc({ event_type: eventName, result: 'duplicate' });
+          app.log.info(
+            {
+              event_type: eventName,
+              delivery_id: deliveryId,
+              issue_number: issueNumber,
+              result: 'duplicate',
+            },
+            'Webhook event deduplicated',
+          );
+          return reply.status(200).send({ accepted: false, duplicate: true });
+        }
 
-    webhookEventsTotal.inc({ event_type: eventName, result: 'accepted' });
-    return reply.status(202).send({ accepted: true, eventId: eventResult.eventId });
+        await observeBoundary('enqueue', { issueNumber }, async () => {
+          services.orchestrator.enqueue({
+            eventId: eventResult.eventId,
+            envelope,
+          });
+        });
+
+        webhookEventsTotal.inc({ event_type: eventName, result: 'accepted' });
+        app.log.info(
+          {
+            event_type: eventName,
+            delivery_id: deliveryId,
+            issue_number: issueNumber,
+            event_id: eventResult.eventId,
+            result: 'accepted',
+          },
+          'Webhook event accepted and enqueued',
+        );
+        return reply.status(202).send({ accepted: true, eventId: eventResult.eventId });
+      },
+    );
   });
 
   return app;

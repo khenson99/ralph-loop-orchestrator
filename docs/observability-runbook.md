@@ -20,6 +20,8 @@ Required metrics:
 2. `ralph_workflow_run_duration_ms`
 3. `ralph_webhook_events_total{event_type,result}`
 4. `ralph_retries_total{operation}`
+5. `ralph_orchestration_boundary_calls_total{boundary,result}`
+6. `ralph_orchestration_boundary_duration_ms{boundary}`
 
 ### Log safety contract
 1. Secrets and token-like strings must be redacted before persistence or outbound review comments.
@@ -31,7 +33,7 @@ Run before and after deploy:
 1. `npm run test -- test/observability-contract.test.ts`
 2. `curl -sf http://localhost:3000/healthz`
 3. `curl -sf http://localhost:3000/readyz`
-4. `curl -sf http://localhost:3000/metrics | rg 'ralph_(workflow_runs_total|workflow_run_duration_ms|webhook_events_total|retries_total)'`
+4. `curl -sf http://localhost:3000/metrics | rg 'ralph_(workflow_runs_total|workflow_run_duration_ms|webhook_events_total|retries_total|orchestration_boundary_calls_total|orchestration_boundary_duration_ms)'`
 
 ## Incident triage
 

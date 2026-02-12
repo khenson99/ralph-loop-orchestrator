@@ -30,3 +30,18 @@ export const retriesTotal = new Counter({
   labelNames: ['operation'],
   registers: [metricsRegistry],
 });
+
+export const orchestrationBoundaryCallsTotal = new Counter({
+  name: 'ralph_orchestration_boundary_calls_total',
+  help: 'Boundary calls across webhook ingest/orchestration integrations',
+  labelNames: ['boundary', 'result'],
+  registers: [metricsRegistry],
+});
+
+export const orchestrationBoundaryDurationMs = new Histogram({
+  name: 'ralph_orchestration_boundary_duration_ms',
+  help: 'Boundary call duration in milliseconds',
+  labelNames: ['boundary'],
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000, 15000],
+  registers: [metricsRegistry],
+});
