@@ -174,7 +174,7 @@ export function buildServer(services: AppServices) {
     .lane-sub { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
     .lane-count { float: right; color: var(--accent); font-weight: 700; }
     .cards { padding: 10px; display: grid; gap: 10px; }
-    .card { border: 1px solid #2b3f67; border-radius: 12px; background: #0e1a35; padding: 10px; }
+    .card { border: 1px solid #2b3f67; border-radius: 12px; background: #0e1a35; padding: 10px; color: inherit; text-decoration: none; display: block; }
     .card h4 { margin: 0 0 6px; font-size: 14px; }
     .meta { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     .badges { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -243,8 +243,9 @@ export function buildServer(services: AppServices) {
           const issueLabel = card.issueNumber ? '#' + card.issueNumber : 'No issue';
           const prLabel = card.prNumber ? 'PR #' + card.prNumber : 'No PR';
           const taskStats = card.taskCounts ? 'done:' + card.taskCounts.completed + ' retry:' + card.taskCounts.retry + ' running:' + card.taskCounts.running : '';
-          const el = document.createElement('article');
+          const el = document.createElement('a');
           el.className = 'card';
+          el.href = '/supervisor/runs/' + encodeURIComponent(card.runId);
           el.innerHTML = '<h4>' + issueLabel + ' · ' + card.runId.slice(0, 8) + '</h4>'
             + '<div class="meta">' + prLabel + ' · ' + new Date(card.updatedAt).toLocaleString() + '</div>'
             + '<div class="badges"><span class="badge ' + badgeClass(card.status) + '">' + card.status + '</span>'
@@ -259,6 +260,125 @@ export function buildServer(services: AppServices) {
     laneEl.addEventListener('change', () => load());
     statusEl.addEventListener('change', () => load());
     refreshEl.addEventListener('click', () => load());
+    load();
+  </script>
+</body>
+</html>`;
+  });
+
+  app.get('/supervisor/runs/:runId', async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    reply.type('text/html');
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Run Detail ${runId}</title>
+  <style>
+    :root {
+      --bg: #0a1120;
+      --panel: #121d33;
+      --text: #deebff;
+      --muted: #91a5c9;
+      --line: #2f446d;
+      --accent: #52b4ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; background: linear-gradient(160deg, #101d3b 0%, var(--bg) 55%); color: var(--text); }
+    .wrap { max-width: 1500px; margin: 0 auto; padding: 20px; }
+    .top { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .top a { color: var(--accent); text-decoration: none; }
+    .layout { display: grid; grid-template-columns: minmax(260px, 0.9fr) minmax(380px, 1.3fr); gap: 14px; }
+    .panel { background: rgba(18, 29, 51, 0.92); border: 1px solid #2c4069; border-radius: 14px; padding: 14px; }
+    .panel h3 { margin: 0 0 10px; font-size: 15px; }
+    .timeline { position: relative; padding-left: 20px; display: grid; gap: 10px; }
+    .timeline:before { content: ''; position: absolute; left: 7px; top: 4px; bottom: 4px; width: 2px; background: var(--line); }
+    .event { position: relative; background: #0f1a2f; border: 1px solid #2a3f67; border-radius: 10px; padding: 8px 10px; }
+    .event:before { content: ''; position: absolute; left: -17px; top: 12px; width: 10px; height: 10px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 2px #0a1120; }
+    .event .meta { font-size: 12px; color: var(--muted); }
+    .grid { display: grid; gap: 10px; }
+    .row { border: 1px solid #2a3f67; border-radius: 10px; padding: 8px 10px; background: #0f1a2f; }
+    .row .meta { font-size: 12px; color: var(--muted); }
+    .error { color: #ffd1d1; background: #381d26; border: 1px solid #7f2338; padding: 10px; border-radius: 10px; }
+    @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a href="/supervisor">Back to Board</a>
+      <strong id="title">Run ${runId}</strong>
+    </div>
+    <div class="layout">
+      <section class="panel">
+        <h3>Timeline Spine</h3>
+        <div id="timeline" class="timeline"></div>
+      </section>
+      <section class="grid">
+        <div class="panel">
+          <h3>Run Summary</h3>
+          <div id="summary"></div>
+        </div>
+        <div class="panel">
+          <h3>Tasks</h3>
+          <div id="tasks" class="grid"></div>
+        </div>
+        <div class="panel">
+          <h3>Artifacts</h3>
+          <div id="artifacts" class="grid"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+  <script>
+    const runId = ${JSON.stringify(runId)};
+    async function load() {
+      const response = await fetch('/api/runs/' + encodeURIComponent(runId));
+      if (!response.ok) {
+        document.getElementById('summary').innerHTML = '<div class="error">Run not found or unavailable.</div>';
+        return;
+      }
+      const run = await response.json();
+      render(run);
+    }
+    function render(run) {
+      document.getElementById('title').textContent = 'Run ' + run.id;
+      document.getElementById('summary').innerHTML =
+        '<div class="row"><strong>Status:</strong> ' + run.status + '</div>' +
+        '<div class="row"><strong>Stage:</strong> ' + run.currentStage + '</div>' +
+        '<div class="row"><strong>Issue:</strong> ' + (run.issueNumber ? '#' + run.issueNumber : 'N/A') + '</div>' +
+        '<div class="row"><strong>PR:</strong> ' + (run.prNumber ? '#' + run.prNumber : 'N/A') + '</div>';
+
+      const timeline = document.getElementById('timeline');
+      timeline.innerHTML = '';
+      const transitions = run.transitions && run.transitions.length ? run.transitions : [{ fromStage: 'N/A', toStage: run.currentStage, transitionedAt: run.updatedAt, metadata: {} }];
+      for (const t of transitions) {
+        const event = document.createElement('div');
+        event.className = 'event';
+        event.innerHTML = '<div><strong>' + t.fromStage + ' → ' + t.toStage + '</strong></div>' +
+          '<div class="meta">' + new Date(t.transitionedAt).toLocaleString() + '</div>';
+        timeline.appendChild(event);
+      }
+
+      const tasks = document.getElementById('tasks');
+      tasks.innerHTML = '';
+      for (const task of run.tasks || []) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = '<div><strong>' + task.taskKey + '</strong></div><div class="meta">status=' + task.status + ' · attempts=' + task.attempts + '</div>';
+        tasks.appendChild(row);
+      }
+
+      const artifacts = document.getElementById('artifacts');
+      artifacts.innerHTML = '';
+      for (const artifact of run.artifacts || []) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = '<div><strong>' + artifact.kind + '</strong></div><div class="meta">' + new Date(artifact.createdAt).toLocaleString() + '</div>';
+        artifacts.appendChild(row);
+      }
+    }
     load();
   </script>
 </body>
