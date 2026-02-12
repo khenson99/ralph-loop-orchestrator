@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, lt, sql } from 'drizzle-orm';
 
 import yaml from 'js-yaml';
 
+import { redactSecrets, redactSecretsInText } from '../lib/redaction.js';
 import type { AgentResultV1, MergeDecisionV1 } from '../schemas/contracts.js';
 import { FormalSpecV1Schema } from '../schemas/contracts.js';
 import { InvalidTransitionError, isValidTransition } from '../orchestrator/stages.js';
@@ -35,7 +36,7 @@ export class WorkflowRepository {
           eventType: params.eventType,
           sourceOwner: params.sourceOwner,
           sourceRepo: params.sourceRepo,
-          payload: params.payload,
+          payload: redactSecrets(params.payload),
         })
         .returning({ id: events.id });
 
@@ -103,7 +104,7 @@ export class WorkflowRepository {
       .update(events)
       .set({
         processed: true,
-        error: error ?? null,
+        error: error ? redactSecretsInText(error) : null,
       })
       .where(eq(events.id, eventId));
   }
@@ -279,8 +280,8 @@ export class WorkflowRepository {
       agentRole: params.agentRole,
       attemptNumber: params.attemptNumber,
       status: params.status,
-      output: params.output ?? null,
-      error: params.error ?? null,
+      output: params.output ? redactSecrets(params.output) : null,
+      error: params.error ? redactSecretsInText(params.error) : null,
       errorCategory: params.errorCategory ?? null,
       backoffDelayMs: params.backoffDelayMs ?? null,
       durationMs: params.durationMs ?? null,
@@ -298,8 +299,8 @@ export class WorkflowRepository {
       workflowRunId: params.workflowRunId,
       taskId: params.taskId ?? null,
       kind: params.kind,
-      content: params.content,
-      metadata: params.metadata ?? {},
+      content: redactSecretsInText(params.content),
+      metadata: params.metadata ? redactSecrets(params.metadata) : {},
     });
   }
 
@@ -312,8 +313,8 @@ export class WorkflowRepository {
       workflowRunId: runId,
       prNumber,
       decision: decision.decision,
-      rationale: decision.rationale,
-      blockingFindings: decision.blocking_findings,
+      rationale: redactSecretsInText(decision.rationale),
+      blockingFindings: decision.blocking_findings.map((item) => redactSecretsInText(item)),
     });
   }
 
