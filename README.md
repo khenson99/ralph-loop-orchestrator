@@ -13,6 +13,15 @@ Standalone orchestration service for a Ralph Team Loop workflow:
   - `GET /metrics`
   - `GET /api/runs/:runId`
   - `GET /api/tasks/:taskId`
+  - `GET /api/v1/boards/default`
+  - `GET /api/v1/auth/me`
+  - `GET /api/v1/tasks/:taskId/detail`
+  - `GET /api/v1/tasks/:taskId/timeline`
+  - `POST /api/v1/tasks/:taskId/actions/:action`
+  - `GET /api/v1/stream?topics=board,task_<id>` (SSE)
+- Built-in Kanban control UI served from the orchestrator:
+  - `GET /app`
+  - Board/detail views use live GitHub PR check-run status when PR links exist
 - Optional static web console in `apps/vercel-console` for Vercel hosting
 - PostgreSQL persistence with Drizzle tables:
   - `workflow_runs`, `events`, `tasks`, `agent_attempts`, `artifacts`, `merge_decisions`
@@ -41,6 +50,11 @@ Standalone orchestration service for a Ralph Team Loop workflow:
    - `npm run ralph:init -- --repo-type monorepo --project-url "https://github.com/users/<you>/projects/<id>"`
 5. Start service:
    - `npm run dev`
+6. Open the UI:
+   - `http://localhost:3000/app`
+7. To execute task actions from the UI, set an identity:
+   - choose user + role in the top controls
+   - action routes require `x-ralph-user` and enforce role permissions
 
 ## Configure GitHub repo policies
 

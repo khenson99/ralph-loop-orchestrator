@@ -32,6 +32,38 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function createWorkflowRepoStub(overrides: Partial<Parameters<typeof buildServer>[0]['workflowRepo']> = {}) {
+  return {
+    getRunView: async () => null,
+    listRecentRuns: async () => [],
+    getTaskView: async () => null,
+    listRecentTasks: async () => [],
+    getTaskDetail: async () => null,
+    listTaskTimeline: async () => [],
+    listBoardCards: async () => [],
+    applyTaskAction: async () => null,
+    recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
+    ...overrides,
+  };
+}
+
+const githubStub: Parameters<typeof buildServer>[0]['github'] = {
+  getPullRequestChecksSnapshot: async (prNumber) => ({
+    prNumber,
+    title: `PR #${prNumber}`,
+    url: `https://github.com/khenson99/ralph-loop-orchestrator/pull/${prNumber}`,
+    state: 'open',
+    draft: false,
+    mergeable: true,
+    headSha: 'abc123',
+    checks: [],
+    requiredCheckNames: [],
+    overallStatus: 'unknown',
+  }),
+  listAccessibleRepositories: async () => [],
+  listEpicIssues: async () => [],
+};
+
 describe('github webhook route', () => {
   it('accepts valid signed webhook and enqueues run', async () => {
     const enqueue = vi.fn();
@@ -39,13 +71,8 @@ describe('github webhook route', () => {
     const app = buildServer({
       config,
       dbClient: { ready: async () => true },
-      workflowRepo: {
-        getRunView: async () => null,
-        listRecentRuns: async () => [],
-        getTaskView: async () => null,
-        listRecentTasks: async () => [],
-        recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
-      },
+      workflowRepo: createWorkflowRepoStub(),
+      github: githubStub,
       orchestrator: { enqueue },
       logger: createLogger('silent'),
     });
@@ -82,13 +109,8 @@ describe('github webhook route', () => {
     const app = buildServer({
       config,
       dbClient: { ready: async () => true },
-      workflowRepo: {
-        getRunView: async () => null,
-        listRecentRuns: async () => [],
-        getTaskView: async () => null,
-        listRecentTasks: async () => [],
-        recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
-      },
+      workflowRepo: createWorkflowRepoStub(),
+      github: githubStub,
       orchestrator: { enqueue: vi.fn() },
       logger: createLogger('silent'),
     });
@@ -123,13 +145,10 @@ describe('github webhook route', () => {
     const app = buildServer({
       config,
       dbClient: { ready: async () => true },
-      workflowRepo: {
-        getRunView: async () => null,
-        listRecentRuns: async () => [],
-        getTaskView: async () => null,
-        listRecentTasks: async () => [],
+      workflowRepo: createWorkflowRepoStub({
         recordEventIfNew: async () => ({ inserted: false, eventId: 'evt-existing' }),
-      },
+      }),
+      github: githubStub,
       orchestrator: { enqueue },
       logger: createLogger('silent'),
     });

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, or, sql } from 'drizzle-orm';
 
 import type { AgentResultV1, MergeDecisionV1 } from '../schemas/contracts.js';
 import type { DatabaseClient } from './db.js';
@@ -351,6 +351,210 @@ export class WorkflowRepository {
     };
   }
 
+  async listBoardCards() {
+    const rows = await this.dbClient.db
+      .select({
+        taskId: tasks.id,
+        workflowRunId: tasks.workflowRunId,
+        taskKey: tasks.taskKey,
+        title: tasks.title,
+        ownerRole: tasks.ownerRole,
+        status: tasks.status,
+        attemptCount: tasks.attemptCount,
+        createdAt: tasks.createdAt,
+        updatedAt: tasks.updatedAt,
+        issueNumber: workflowRuns.issueNumber,
+        prNumber: workflowRuns.prNumber,
+        currentStage: workflowRuns.currentStage,
+      })
+      .from(tasks)
+      .innerJoin(workflowRuns, eq(tasks.workflowRunId, workflowRuns.id))
+      .orderBy(desc(tasks.updatedAt));
+
+    const attemptRows = await this.dbClient.db
+      .select({
+        id: agentAttempts.id,
+        taskId: agentAttempts.taskId,
+        status: agentAttempts.status,
+      })
+      .from(agentAttempts)
+      .orderBy(desc(agentAttempts.createdAt));
+
+    const latestAttemptByTask = new Map<string, { id: string; status: string }>();
+    for (const attempt of attemptRows) {
+      if (!latestAttemptByTask.has(attempt.taskId)) {
+        latestAttemptByTask.set(attempt.taskId, { id: attempt.id, status: attempt.status });
+      }
+    }
+
+    const mergeRows = await this.dbClient.db
+      .select({
+        workflowRunId: mergeDecisions.workflowRunId,
+        decision: mergeDecisions.decision,
+      })
+      .from(mergeDecisions)
+      .orderBy(desc(mergeDecisions.createdAt));
+
+    const latestMergeByRun = new Map<string, string>();
+    for (const row of mergeRows) {
+      if (!latestMergeByRun.has(row.workflowRunId)) {
+        latestMergeByRun.set(row.workflowRunId, row.decision);
+      }
+    }
+
+    const sourceRows = await this.dbClient.db
+      .select({
+        workflowRunId: events.workflowRunId,
+        sourceOwner: events.sourceOwner,
+        sourceRepo: events.sourceRepo,
+      })
+      .from(events)
+      .where(sql`${events.workflowRunId} IS NOT NULL`)
+      .orderBy(desc(events.receivedAt));
+
+    const sourceByRun = new Map<string, { sourceOwner: string; sourceRepo: string }>();
+    for (const row of sourceRows) {
+      if (!row.workflowRunId || sourceByRun.has(row.workflowRunId)) {
+        continue;
+      }
+      sourceByRun.set(row.workflowRunId, {
+        sourceOwner: row.sourceOwner,
+        sourceRepo: row.sourceRepo,
+      });
+    }
+
+    return rows.map((row) => ({
+      ...(sourceByRun.get(row.workflowRunId) ?? {
+        sourceOwner: '',
+        sourceRepo: '',
+      }),
+      id: row.taskId,
+      workflowRunId: row.workflowRunId,
+      taskKey: row.taskKey,
+      title: row.title,
+      ownerRole: row.ownerRole,
+      status: row.status,
+      attemptCount: row.attemptCount,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      issueNumber: row.issueNumber,
+      prNumber: row.prNumber,
+      currentStage: row.currentStage,
+      latestAttempt: latestAttemptByTask.get(row.taskId) ?? null,
+      latestMergeDecision: latestMergeByRun.get(row.workflowRunId) ?? null,
+    }));
+  }
+
+  async getTaskDetail(taskId: string) {
+    const rows = await this.dbClient.db
+      .select({
+        taskId: tasks.id,
+        workflowRunId: tasks.workflowRunId,
+        taskKey: tasks.taskKey,
+        title: tasks.title,
+        ownerRole: tasks.ownerRole,
+        status: tasks.status,
+        attemptCount: tasks.attemptCount,
+        definitionOfDone: tasks.definitionOfDone,
+        dependsOn: tasks.dependsOn,
+        lastResult: tasks.lastResult,
+        taskCreatedAt: tasks.createdAt,
+        taskUpdatedAt: tasks.updatedAt,
+        runStatus: workflowRuns.status,
+        runStage: workflowRuns.currentStage,
+        issueNumber: workflowRuns.issueNumber,
+        prNumber: workflowRuns.prNumber,
+        specId: workflowRuns.specId,
+      })
+      .from(tasks)
+      .innerJoin(workflowRuns, eq(tasks.workflowRunId, workflowRuns.id))
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+
+    const sourceRow = await this.dbClient.db
+      .select({
+        sourceOwner: events.sourceOwner,
+        sourceRepo: events.sourceRepo,
+      })
+      .from(events)
+      .where(eq(events.workflowRunId, row.workflowRunId))
+      .orderBy(desc(events.receivedAt))
+      .limit(1);
+
+    const attemptRows = await this.dbClient.db
+      .select({
+        id: agentAttempts.id,
+        agentRole: agentAttempts.agentRole,
+        attemptNumber: agentAttempts.attemptNumber,
+        status: agentAttempts.status,
+        output: agentAttempts.output,
+        error: agentAttempts.error,
+        durationMs: agentAttempts.durationMs,
+        createdAt: agentAttempts.createdAt,
+      })
+      .from(agentAttempts)
+      .where(eq(agentAttempts.taskId, taskId))
+      .orderBy(desc(agentAttempts.createdAt));
+
+    const artifactRows = await this.dbClient.db
+      .select({
+        id: artifacts.id,
+        kind: artifacts.kind,
+        content: artifacts.content,
+        metadata: artifacts.metadata,
+        createdAt: artifacts.createdAt,
+      })
+      .from(artifacts)
+      .where(or(eq(artifacts.taskId, taskId), eq(artifacts.workflowRunId, row.workflowRunId)))
+      .orderBy(desc(artifacts.createdAt));
+
+    const timeline = await this.listTaskTimeline(taskId);
+
+    return {
+      cardBase: {
+        id: row.taskId,
+        workflowRunId: row.workflowRunId,
+        taskKey: row.taskKey,
+        title: row.title,
+        ownerRole: row.ownerRole,
+        status: row.status,
+        attemptCount: row.attemptCount,
+        createdAt: row.taskCreatedAt,
+        updatedAt: row.taskUpdatedAt,
+        issueNumber: row.issueNumber,
+        prNumber: row.prNumber,
+        currentStage: row.runStage,
+        sourceOwner: sourceRow[0]?.sourceOwner ?? '',
+        sourceRepo: sourceRow[0]?.sourceRepo ?? '',
+      },
+      run: {
+        id: row.workflowRunId,
+        status: row.runStatus,
+        currentStage: row.runStage,
+        specId: row.specId,
+      },
+      task: {
+        id: row.taskId,
+        taskKey: row.taskKey,
+        title: row.title,
+        ownerRole: row.ownerRole,
+        status: row.status,
+        attempts: row.attemptCount,
+        definitionOfDone: row.definitionOfDone,
+        dependsOn: row.dependsOn,
+        lastResult: row.lastResult,
+      },
+      attempts: attemptRows,
+      artifacts: artifactRows,
+      timeline,
+    };
+  }
+
   async listRecentRuns(limit = 50) {
     const cappedLimit = Math.max(1, Math.min(limit, 200));
     return this.dbClient.db
@@ -383,5 +587,206 @@ export class WorkflowRepository {
       .from(tasks)
       .orderBy(desc(tasks.createdAt))
       .limit(cappedLimit);
+  }
+
+  async listTaskTimeline(taskId: string) {
+    const taskRows = await this.dbClient.db
+      .select({
+        id: tasks.id,
+        workflowRunId: tasks.workflowRunId,
+        taskKey: tasks.taskKey,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+
+    const taskRow = taskRows[0];
+    if (!taskRow) {
+      return [];
+    }
+
+    const [attemptRows, artifactRows, eventRows, decisionRows] = await Promise.all([
+      this.dbClient.db
+        .select({
+          id: agentAttempts.id,
+          agentRole: agentAttempts.agentRole,
+          attemptNumber: agentAttempts.attemptNumber,
+          status: agentAttempts.status,
+          error: agentAttempts.error,
+          createdAt: agentAttempts.createdAt,
+        })
+        .from(agentAttempts)
+        .where(eq(agentAttempts.taskId, taskId)),
+      this.dbClient.db
+        .select({
+          id: artifacts.id,
+          kind: artifacts.kind,
+          metadata: artifacts.metadata,
+          createdAt: artifacts.createdAt,
+        })
+        .from(artifacts)
+        .where(or(eq(artifacts.taskId, taskId), eq(artifacts.workflowRunId, taskRow.workflowRunId))),
+      this.dbClient.db
+        .select({
+          id: events.id,
+          eventType: events.eventType,
+          payload: events.payload,
+          createdAt: events.receivedAt,
+        })
+        .from(events)
+        .where(eq(events.workflowRunId, taskRow.workflowRunId)),
+      this.dbClient.db
+        .select({
+          id: mergeDecisions.id,
+          decision: mergeDecisions.decision,
+          rationale: mergeDecisions.rationale,
+          createdAt: mergeDecisions.createdAt,
+        })
+        .from(mergeDecisions)
+        .where(eq(mergeDecisions.workflowRunId, taskRow.workflowRunId)),
+    ]);
+
+    const timeline = [
+      ...eventRows.map((row) => ({
+        event_id: `github:${row.id}`,
+        event_type: row.eventType,
+        occurred_at: row.createdAt,
+        actor: { type: 'system' as const, id: 'github' },
+        message: `${row.eventType} received from GitHub`,
+        data: row.payload,
+      })),
+      ...attemptRows.map((row) => ({
+        event_id: `attempt:${row.id}`,
+        event_type: `attempt.${row.status}`,
+        occurred_at: row.createdAt,
+        actor: { type: 'system' as const, id: row.agentRole },
+        message: `Attempt ${row.attemptNumber} by ${row.agentRole} is ${row.status}`,
+        data: { error: row.error ?? null },
+      })),
+      ...artifactRows.map((row) => {
+        const metadata = row.metadata ?? {};
+        const actionName = typeof metadata.action === 'string' ? metadata.action : null;
+        const actorName = typeof metadata.requested_by === 'string' ? metadata.requested_by : 'system';
+        return {
+          event_id: `artifact:${row.id}`,
+          event_type: row.kind === 'ui_action' ? `action.${actionName ?? 'unknown'}` : `artifact.${row.kind}`,
+          occurred_at: row.createdAt,
+          actor: {
+            type: row.kind === 'ui_action' ? ('user' as const) : ('system' as const),
+            id: actorName,
+          },
+          message:
+            row.kind === 'ui_action'
+              ? `Action ${actionName ?? 'unknown'} was executed`
+              : `Artifact ${row.kind} created`,
+          data: metadata,
+        };
+      }),
+      ...decisionRows.map((row) => ({
+        event_id: `decision:${row.id}`,
+        event_type: 'merge.decision',
+        occurred_at: row.createdAt,
+        actor: { type: 'system' as const, id: 'reviewer' },
+        message: `Merge decision is ${row.decision}`,
+        data: { rationale: row.rationale },
+      })),
+    ];
+
+    timeline.sort((a, b) => b.occurred_at.getTime() - a.occurred_at.getTime());
+
+    return timeline.map((event) => ({
+      ...event,
+      occurred_at: event.occurred_at.toISOString(),
+    }));
+  }
+
+  async applyTaskAction(params: {
+    taskId: string;
+    action: 'retry' | 'retry_attempt' | 'reassign' | 'escalate' | 'block' | 'unblock';
+    requestedBy: string;
+    reason: string;
+    newOwnerRole?: string;
+  }) {
+    const rows = await this.dbClient.db
+      .select({
+        id: tasks.id,
+        workflowRunId: tasks.workflowRunId,
+        status: tasks.status,
+        ownerRole: tasks.ownerRole,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, params.taskId))
+      .limit(1);
+
+    const existing = rows[0];
+    if (!existing) {
+      return null;
+    }
+
+    let nextStatus = existing.status;
+    let nextOwnerRole = existing.ownerRole;
+
+    switch (params.action) {
+      case 'retry':
+      case 'retry_attempt':
+        nextStatus = 'retry';
+        break;
+      case 'block':
+        nextStatus = 'blocked';
+        break;
+      case 'unblock':
+        nextStatus = 'queued';
+        break;
+      case 'reassign':
+        if (params.newOwnerRole) {
+          nextOwnerRole = params.newOwnerRole;
+        }
+        break;
+      case 'escalate':
+        break;
+      default: {
+        const unknownAction: never = params.action;
+        throw new Error(`Unsupported action: ${unknownAction}`);
+      }
+    }
+
+    await this.dbClient.db
+      .update(tasks)
+      .set({
+        status: nextStatus,
+        ownerRole: nextOwnerRole,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(tasks.id, params.taskId));
+
+    const [artifactRow] = await this.dbClient.db
+      .insert(artifacts)
+      .values({
+        workflowRunId: existing.workflowRunId,
+        taskId: existing.id,
+        kind: 'ui_action',
+        content: params.reason,
+        metadata: {
+          action: params.action,
+          requested_by: params.requestedBy,
+          status_before: existing.status,
+          status_after: nextStatus,
+          owner_before: existing.ownerRole,
+          owner_after: nextOwnerRole,
+          reason: params.reason,
+        },
+      })
+      .returning({ id: artifacts.id, createdAt: artifacts.createdAt });
+
+    if (!artifactRow) {
+      throw new Error('Failed to record action artifact');
+    }
+
+    return {
+      actionId: artifactRow.id,
+      createdAt: artifactRow.createdAt.toISOString(),
+      status: nextStatus,
+      ownerRole: nextOwnerRole,
+    };
   }
 }

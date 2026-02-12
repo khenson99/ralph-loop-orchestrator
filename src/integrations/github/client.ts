@@ -13,10 +13,42 @@ export type IssueContext = {
   actor: string;
 };
 
+export type RepoRef = {
+  owner: string;
+  repo: string;
+};
+
+export type PullRequestChecksSnapshot = {
+  prNumber: number;
+  title: string;
+  url: string;
+  state: 'open' | 'closed';
+  draft: boolean;
+  mergeable: boolean | null;
+  headSha: string;
+  checks: Array<{
+    name: string;
+    status: 'queued' | 'in_progress' | 'completed';
+    conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
+    detailsUrl: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    required: boolean;
+  }>;
+  requiredCheckNames: string[];
+  overallStatus: 'unknown' | 'pending' | 'passing' | 'failing';
+};
+
 export class GitHubClient {
   private readonly octokit: Octokit;
+  private readonly defaultRepo: RepoRef;
 
   constructor(private readonly config: AppConfig['github']) {
+    this.defaultRepo = {
+      owner: this.config.targetOwner,
+      repo: this.config.targetRepo,
+    };
+
     if (this.config.token) {
       this.octokit = new Octokit({ auth: this.config.token });
       return;
@@ -36,16 +68,27 @@ export class GitHubClient {
     });
   }
 
-  async getIssueContext(issueNumber: number): Promise<IssueContext> {
+  private resolveRepo(ref?: RepoRef): RepoRef {
+    if (!ref) {
+      return this.defaultRepo;
+    }
+    return {
+      owner: ref.owner,
+      repo: ref.repo,
+    };
+  }
+
+  async getIssueContext(issueNumber: number, ref?: RepoRef): Promise<IssueContext> {
+    const repo = this.resolveRepo(ref);
     const issue = await this.octokit.rest.issues.get({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       issue_number: issueNumber,
     });
 
     return {
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       issueNumber,
       title: issue.data.title,
       body: issue.data.body ?? '',
@@ -54,28 +97,31 @@ export class GitHubClient {
     };
   }
 
-  async getBranchSha(branch: string): Promise<string> {
-    const ref = await this.octokit.rest.git.getRef({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+  async getBranchSha(branch: string, ref?: RepoRef): Promise<string> {
+    const repo = this.resolveRepo(ref);
+    const response = await this.octokit.rest.git.getRef({
+      owner: repo.owner,
+      repo: repo.repo,
       ref: `heads/${branch}`,
     });
-    return ref.data.object.sha;
+    return response.data.object.sha;
   }
 
-  async addIssueComment(issueNumber: number, body: string): Promise<void> {
+  async addIssueComment(issueNumber: number, body: string, ref?: RepoRef): Promise<void> {
+    const repo = this.resolveRepo(ref);
     await this.octokit.rest.issues.createComment({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       issue_number: issueNumber,
       body,
     });
   }
 
-  async findOpenPullRequestForIssue(issueNumber: number): Promise<number | null> {
+  async findOpenPullRequestForIssue(issueNumber: number, ref?: RepoRef): Promise<number | null> {
+    const repo = this.resolveRepo(ref);
     const pulls = await this.octokit.rest.pulls.list({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       state: 'open',
       sort: 'updated',
       direction: 'desc',
@@ -90,21 +136,23 @@ export class GitHubClient {
     return match?.number ?? null;
   }
 
-  async getPullRequest(prNumber: number) {
+  async getPullRequest(prNumber: number, ref?: RepoRef) {
+    const repo = this.resolveRepo(ref);
     const pr = await this.octokit.rest.pulls.get({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       pull_number: prNumber,
     });
     return pr.data;
   }
 
-  async hasRequiredChecksPassed(prNumber: number, requiredChecks: string[]): Promise<boolean> {
-    const pr = await this.getPullRequest(prNumber);
+  async hasRequiredChecksPassed(prNumber: number, requiredChecks: string[], ref?: RepoRef): Promise<boolean> {
+    const repo = this.resolveRepo(ref);
+    const pr = await this.getPullRequest(prNumber, repo);
 
     const checks = await this.octokit.rest.checks.listForRef({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       ref: pr.head.sha,
       per_page: 100,
     });
@@ -123,28 +171,100 @@ export class GitHubClient {
     });
   }
 
-  async requestChanges(prNumber: number, body: string): Promise<void> {
+  async getPullRequestChecksSnapshot(
+    prNumber: number,
+    requiredChecks: string[],
+    ref?: RepoRef,
+  ): Promise<PullRequestChecksSnapshot> {
+    const repo = this.resolveRepo(ref);
+    const pr = await this.getPullRequest(prNumber, repo);
+    const checks = await this.octokit.rest.checks.listForRef({
+      owner: repo.owner,
+      repo: repo.repo,
+      ref: pr.head.sha,
+      per_page: 100,
+    });
+
+    const requiredSet = new Set(requiredChecks);
+    const checkRuns = checks.data.check_runs.map((run) => ({
+      name: run.name,
+      status: run.status as 'queued' | 'in_progress' | 'completed',
+      conclusion: run.conclusion as
+        | 'success'
+        | 'failure'
+        | 'neutral'
+        | 'cancelled'
+        | 'skipped'
+        | 'timed_out'
+        | 'action_required'
+        | null,
+      detailsUrl: run.details_url ?? null,
+      startedAt: run.started_at ?? null,
+      completedAt: run.completed_at ?? null,
+      required: requiredSet.has(run.name),
+    }));
+
+    let overallStatus: PullRequestChecksSnapshot['overallStatus'] = 'unknown';
+    if (checkRuns.length > 0) {
+      const allCompleted = checkRuns.every((run) => run.status === 'completed');
+      const anyFailing = checkRuns.some(
+        (run) =>
+          run.conclusion === 'failure' ||
+          run.conclusion === 'timed_out' ||
+          run.conclusion === 'cancelled' ||
+          run.conclusion === 'action_required',
+      );
+      const allPassing = checkRuns.every((run) => run.status === 'completed' && run.conclusion === 'success');
+
+      if (allPassing) {
+        overallStatus = 'passing';
+      } else if (anyFailing) {
+        overallStatus = 'failing';
+      } else if (!allCompleted) {
+        overallStatus = 'pending';
+      } else {
+        overallStatus = 'unknown';
+      }
+    }
+
+    return {
+      prNumber,
+      title: pr.title,
+      url: pr.html_url,
+      state: pr.state as 'open' | 'closed',
+      draft: pr.draft ?? false,
+      mergeable: pr.mergeable,
+      headSha: pr.head.sha,
+      checks: checkRuns,
+      requiredCheckNames: requiredChecks,
+      overallStatus,
+    };
+  }
+
+  async requestChanges(prNumber: number, body: string, ref?: RepoRef): Promise<void> {
+    const repo = this.resolveRepo(ref);
     await this.octokit.rest.pulls.createReview({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       pull_number: prNumber,
       event: 'REQUEST_CHANGES',
       body,
     });
   }
 
-  async approvePullRequest(prNumber: number, body: string): Promise<void> {
+  async approvePullRequest(prNumber: number, body: string, ref?: RepoRef): Promise<void> {
+    const repo = this.resolveRepo(ref);
     await this.octokit.rest.pulls.createReview({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       pull_number: prNumber,
       event: 'APPROVE',
       body,
     });
   }
 
-  async enableAutoMerge(prNumber: number): Promise<void> {
-    const pr = await this.getPullRequest(prNumber);
+  async enableAutoMerge(prNumber: number, ref?: RepoRef): Promise<void> {
+    const pr = await this.getPullRequest(prNumber, ref);
 
     await this.octokit.graphql(
       `mutation EnableAutoMerge($pullRequestId: ID!) {
@@ -161,20 +281,22 @@ export class GitHubClient {
     );
   }
 
-  async mergePullRequest(prNumber: number): Promise<void> {
+  async mergePullRequest(prNumber: number, ref?: RepoRef): Promise<void> {
+    const repo = this.resolveRepo(ref);
     await this.octokit.rest.pulls.merge({
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       pull_number: prNumber,
       merge_method: 'squash',
       delete_branch: true,
     });
   }
 
-  async ensureLabels(labels: Array<{ name: string; color: string; description: string }>): Promise<void> {
+  async ensureLabels(labels: Array<{ name: string; color: string; description: string }>, ref?: RepoRef): Promise<void> {
+    const repo = this.resolveRepo(ref);
     const existing = await this.octokit.paginate(this.octokit.rest.issues.listLabelsForRepo, {
-      owner: this.config.targetOwner,
-      repo: this.config.targetRepo,
+      owner: repo.owner,
+      repo: repo.repo,
       per_page: 100,
     });
 
@@ -184,8 +306,8 @@ export class GitHubClient {
       const found = existingMap.get(label.name);
       if (!found) {
         await this.octokit.rest.issues.createLabel({
-          owner: this.config.targetOwner,
-          repo: this.config.targetRepo,
+          owner: repo.owner,
+          repo: repo.repo,
           name: label.name,
           color: label.color,
           description: label.description,
@@ -195,8 +317,8 @@ export class GitHubClient {
 
       if (found.color !== label.color || found.description !== label.description) {
         await this.octokit.rest.issues.updateLabel({
-          owner: this.config.targetOwner,
-          repo: this.config.targetRepo,
+          owner: repo.owner,
+          repo: repo.repo,
           name: found.name,
           new_name: label.name,
           color: label.color,
@@ -204,5 +326,117 @@ export class GitHubClient {
         });
       }
     }
+  }
+
+  async listAccessibleRepositories(params?: {
+    owner?: string;
+    limit?: number;
+  }): Promise<
+    Array<{
+      owner: string;
+      repo: string;
+      fullName: string;
+      private: boolean;
+      defaultBranch: string;
+      url: string;
+    }>
+  > {
+    const ownerFilter = params?.owner?.trim().toLowerCase();
+    const limit = Math.max(1, Math.min(params?.limit ?? 200, 500));
+
+    let repos: Array<{
+      owner: string;
+      repo: string;
+      fullName: string;
+      private: boolean;
+      defaultBranch: string;
+      url: string;
+    }> = [];
+
+    if (this.config.token) {
+      const pages = await this.octokit.paginate(this.octokit.rest.repos.listForAuthenticatedUser, {
+        per_page: 100,
+      });
+      repos = pages.map((repo) => ({
+        owner: repo.owner.login,
+        repo: repo.name,
+        fullName: repo.full_name,
+        private: repo.private,
+        defaultBranch: repo.default_branch,
+        url: repo.html_url,
+      }));
+    } else {
+      const response = await this.octokit.request('GET /installation/repositories', {
+        per_page: 100,
+      });
+      repos = (response.data.repositories ?? [])
+        .map((repo) => ({
+          owner: repo.owner.login,
+          repo: repo.name,
+          fullName: repo.full_name,
+          private: repo.private,
+          defaultBranch: repo.default_branch,
+          url: repo.html_url,
+        }));
+    }
+
+    const filtered = repos
+      .filter((repo) => !ownerFilter || repo.owner.toLowerCase() === ownerFilter)
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    return filtered.slice(0, limit);
+  }
+
+  async listEpicIssues(
+    ref: RepoRef,
+    params?: { state?: 'open' | 'closed' | 'all'; limit?: number },
+  ): Promise<
+    Array<{
+      number: number;
+      title: string;
+      state: 'open' | 'closed';
+      labels: string[];
+      url: string;
+      updatedAt: string;
+      createdAt: string;
+    }>
+  > {
+    const repo = this.resolveRepo(ref);
+    const state = params?.state ?? 'open';
+    const limit = Math.max(1, Math.min(params?.limit ?? 200, 500));
+
+    const issues = await this.octokit.paginate(this.octokit.rest.issues.listForRepo, {
+      owner: repo.owner,
+      repo: repo.repo,
+      state,
+      per_page: 100,
+    });
+
+    const epicIssues = issues
+      .filter((issue) => !issue.pull_request)
+      .map((issue) => {
+        const labels = issue.labels
+          .map((label) => (typeof label === 'string' ? label : label.name ?? ''))
+          .filter((label) => label.length > 0);
+        return { issue, labels };
+      })
+      .filter(({ issue, labels }) => {
+        const title = issue.title.toLowerCase();
+        const labelEpic = labels.some((label) => label.toLowerCase().includes('epic'));
+        const titleEpic = title.startsWith('epic:') || title.startsWith('[epic]') || title.includes(' epic ');
+        return labelEpic || titleEpic;
+      })
+      .map(({ issue, labels }) => ({
+        number: issue.number,
+        title: issue.title,
+        state: issue.state as 'open' | 'closed',
+        labels,
+        url: issue.html_url,
+        updatedAt: issue.updated_at,
+        createdAt: issue.created_at,
+      }))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+
+    return epicIssues.slice(0, limit);
   }
 }
