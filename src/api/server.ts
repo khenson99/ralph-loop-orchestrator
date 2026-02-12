@@ -446,6 +446,10 @@ export function buildServer(services: AppServices) {
     .badge.ok { color: #bcffd6; border-color: #1f8f4a; background: rgba(20,184,90,0.12); }
     .badge.warn { color: #ffe7b0; border-color: #9a6a11; background: rgba(245,158,11,0.12); }
     .badge.danger { color: #ffd2d2; border-color: #a02323; background: rgba(239,68,68,0.12); }
+    a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+      outline: 2px solid #77c4ff;
+      outline-offset: 2px;
+    }
     @media (max-width: 1200px) { .board { grid-template-columns: repeat(3, minmax(220px, 1fr)); } }
     @media (max-width: 860px) { .board { grid-template-columns: repeat(1, minmax(220px, 1fr)); } }
   </style>
@@ -454,8 +458,8 @@ export function buildServer(services: AppServices) {
   <div class="container">
     <h1>Ralph Supervisor Board</h1>
     <div class="toolbar">
-      <input id="q" placeholder="Search run/issue/PR/stage" />
-      <select id="lane">
+      <input id="q" aria-label="Search runs" placeholder="Search run/issue/PR/stage" />
+      <select id="lane" aria-label="Filter by lane">
         <option value="">All lanes</option>
         <option value="ingest">Ingest</option>
         <option value="execute">Execute</option>
@@ -463,16 +467,16 @@ export function buildServer(services: AppServices) {
         <option value="blocked">Blocked</option>
         <option value="done">Done</option>
       </select>
-      <select id="status">
+      <select id="status" aria-label="Filter by status">
         <option value="">All statuses</option>
         <option value="in_progress">in_progress</option>
         <option value="completed">completed</option>
         <option value="dead_letter">dead_letter</option>
         <option value="failed">failed</option>
       </select>
-      <button id="refresh">Refresh</button>
+      <button id="refresh" aria-label="Refresh board">Refresh</button>
     </div>
-    <div id="board" class="board"></div>
+    <div id="board" class="board" role="region" aria-label="Supervisor kanban board"></div>
   </div>
   <script>
     const boardEl = document.getElementById('board');
@@ -502,6 +506,9 @@ export function buildServer(services: AppServices) {
         const cards = data.grouped[lane.id] || [];
         const laneEl = document.createElement('section');
         laneEl.className = 'lane';
+        laneEl.tabIndex = 0;
+        laneEl.setAttribute('role', 'region');
+        laneEl.setAttribute('aria-label', lane.title + ' lane');
         laneEl.innerHTML = '<div class="lane-head"><p class="lane-count">' + cards.length + '</p><h3 class="lane-title">' + lane.title + '</h3><p class="lane-sub">' + lane.description + '</p></div>';
         const cardsEl = document.createElement('div');
         cardsEl.className = 'cards';
@@ -526,6 +533,16 @@ export function buildServer(services: AppServices) {
     laneEl.addEventListener('change', () => load());
     statusEl.addEventListener('change', () => load());
     refreshEl.addEventListener('click', () => load());
+    window.addEventListener('keydown', (event) => {
+      if (event.key === '/' && document.activeElement !== qEl) {
+        event.preventDefault();
+        qEl.focus();
+      }
+      if (event.altKey && event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        load();
+      }
+    });
     function connectStream() {
       const params = new URLSearchParams();
       if (streamLastEventId) {
@@ -599,6 +616,10 @@ export function buildServer(services: AppServices) {
     #logs { max-height: 320px; overflow: auto; }
     pre.log-message { white-space: pre-wrap; margin: 6px 0 0; font-size: 12px; color: #d7e7ff; }
     .error { color: #ffd1d1; background: #381d26; border: 1px solid #7f2338; padding: 10px; border-radius: 10px; }
+    a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+      outline: 2px solid #77c4ff;
+      outline-offset: 2px;
+    }
     @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -616,15 +637,15 @@ export function buildServer(services: AppServices) {
       <section class="grid">
         <div class="panel">
           <h3>Run Summary</h3>
-          <div id="summary"></div>
+          <div id="summary" role="status" aria-live="polite"></div>
         </div>
         <div class="panel">
           <h3>Tasks</h3>
-          <div id="tasks" class="grid"></div>
+          <div id="tasks" class="grid" role="region" aria-label="Task panel"></div>
         </div>
         <div class="panel">
           <h3>Artifacts</h3>
-          <div id="artifacts" class="grid"></div>
+          <div id="artifacts" class="grid" role="region" aria-label="Artifact panel"></div>
         </div>
         <div class="panel">
           <h3>Spec Viewer</h3>
@@ -659,13 +680,13 @@ export function buildServer(services: AppServices) {
                 <option value="admin">admin</option>
               </select>
             </div>
-            <textarea id="actionReason" rows="4" style="width: 100%; background: #0e1830; color: var(--text); border: 1px solid #2e446f; border-radius: 8px; padding: 8px;" placeholder="Enter required reason..."></textarea>
+            <textarea id="actionReason" aria-label="Action reason" rows="4" style="width: 100%; background: #0e1830; color: var(--text); border: 1px solid #2e446f; border-radius: 8px; padding: 8px;" placeholder="Enter required reason..."></textarea>
             <div class="logs-toolbar">
               <button id="actionApprove">Approve PR</button>
               <button id="actionChanges">Request Changes</button>
               <button id="actionBlock">Block</button>
             </div>
-            <div id="actionResult" class="meta"></div>
+            <div id="actionResult" class="meta" role="status" aria-live="polite"></div>
           </div>
         </div>
       </section>
@@ -847,6 +868,16 @@ export function buildServer(services: AppServices) {
     }
     document.getElementById('roleSelect').addEventListener('change', syncActionAvailability);
     syncActionAvailability();
+    window.addEventListener('keydown', (event) => {
+      const logQuery = document.getElementById('logQuery');
+      if (event.key === '/' && document.activeElement !== logQuery) {
+        event.preventDefault();
+        logQuery.focus();
+      }
+      if (event.key === 'Escape') {
+        document.getElementById('actionResult').textContent = '';
+      }
+    });
     load();
   </script>
 </body>
