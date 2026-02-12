@@ -129,6 +129,9 @@ export type AppServices = {
         conclusion: string | null;
       }>;
     }>;
+    approvePullRequest?: (prNumber: number, body: string) => Promise<void>;
+    requestChanges?: (prNumber: number, body: string) => Promise<void>;
+    addIssueComment?: (issueNumber: number, body: string) => Promise<void>;
   };
   orchestrator: {
     enqueue: (item: { eventId: string; envelope: WebhookEventEnvelope }) => void;
@@ -264,6 +267,74 @@ export function buildServer(services: AppServices) {
       runId,
       entries,
       nextCursor: entries.length > 0 ? entries[entries.length - 1]?.timestamp : null,
+    };
+  });
+
+  app.post('/api/runs/:runId/actions', async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    const run = await services.workflowRepo.getRunView(runId);
+    if (!run) {
+      return reply.status(404).send({ error: 'run_not_found' });
+    }
+
+    const bodyRaw = request.body;
+    const parsedBody =
+      typeof bodyRaw === 'string'
+        ? (JSON.parse(bodyRaw) as { action?: string; reason?: string })
+        : ((bodyRaw as { action?: string; reason?: string }) ?? {});
+    const action = String(parsedBody.action ?? '').trim();
+    const reason = String(parsedBody.reason ?? '').trim();
+
+    if (!['approve', 'request_changes', 'block'].includes(action)) {
+      return reply.status(400).send({ error: 'invalid_action' });
+    }
+
+    if (!reason) {
+      return reply.status(400).send({ error: 'reason_required' });
+    }
+
+    if (!services.github) {
+      return reply.status(501).send({ error: 'github_actions_not_supported' });
+    }
+
+    if (!run.prNumber) {
+      if (!run.issueNumber || !services.github.addIssueComment) {
+        return reply.status(409).send({ error: 'no_pr_linked' });
+      }
+
+      await services.github.addIssueComment(
+        run.issueNumber,
+        `Manual supervisor action recorded for run ${runId}: ${action}\n\nReason:\n${reason}`,
+      );
+      return {
+        runId,
+        action,
+        recordedOnIssue: run.issueNumber,
+      };
+    }
+
+    if (action === 'approve') {
+      if (!services.github.approvePullRequest) {
+        return reply.status(501).send({ error: 'approve_not_supported' });
+      }
+      await services.github.approvePullRequest(
+        run.prNumber,
+        `Manual supervisor approval for run ${runId}.\n\nReason:\n${reason}`,
+      );
+    } else {
+      if (!services.github.requestChanges) {
+        return reply.status(501).send({ error: 'request_changes_not_supported' });
+      }
+      await services.github.requestChanges(
+        run.prNumber,
+        `Manual supervisor action (${action}) for run ${runId}.\n\nReason:\n${reason}`,
+      );
+    }
+
+    return {
+      runId,
+      action,
+      prNumber: run.prNumber,
     };
   });
 
@@ -485,6 +556,18 @@ export function buildServer(services: AppServices) {
           </div>
           <div id="logs" class="grid"></div>
         </div>
+        <div class="panel">
+          <h3>Action Controls</h3>
+          <div class="grid">
+            <textarea id="actionReason" rows="4" style="width: 100%; background: #0e1830; color: var(--text); border: 1px solid #2e446f; border-radius: 8px; padding: 8px;" placeholder="Enter required reason..."></textarea>
+            <div class="logs-toolbar">
+              <button id="actionApprove">Approve PR</button>
+              <button id="actionChanges">Request Changes</button>
+              <button id="actionBlock">Block</button>
+            </div>
+            <div id="actionResult" class="meta"></div>
+          </div>
+        </div>
       </section>
     </div>
   </div>
@@ -614,6 +697,31 @@ export function buildServer(services: AppServices) {
     document.getElementById('logTail').addEventListener('click', async () => {
       await loadLogs(true);
     });
+    async function sendAction(action) {
+      const reason = (document.getElementById('actionReason').value || '').trim();
+      const resultEl = document.getElementById('actionResult');
+      if (!reason) {
+        resultEl.textContent = 'Reason is required.';
+        return;
+      }
+      if (!window.confirm('Confirm action: ' + action + '?')) {
+        return;
+      }
+      const response = await fetch('/api/runs/' + encodeURIComponent(runId) + '/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, reason }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        resultEl.textContent = 'Action failed: ' + (payload.error || response.status);
+        return;
+      }
+      resultEl.textContent = 'Action submitted: ' + action;
+    }
+    document.getElementById('actionApprove').addEventListener('click', () => sendAction('approve'));
+    document.getElementById('actionChanges').addEventListener('click', () => sendAction('request_changes'));
+    document.getElementById('actionBlock').addEventListener('click', () => sendAction('block'));
     load();
   </script>
 </body>
