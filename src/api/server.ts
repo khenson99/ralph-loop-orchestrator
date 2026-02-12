@@ -17,6 +17,9 @@ import {
   BoardResponseSchema,
   EpicDispatchResponseSchema,
   EpicListResponseSchema,
+  ProjectListResponseSchema,
+  ProjectTodoDispatchResponseSchema,
+  ProjectTodoListResponseSchema,
   RepoListResponseSchema,
   RuntimeActionResponseSchema,
   RuntimeLogsResponseSchema,
@@ -129,6 +132,35 @@ type GitHubContract = {
       url: string;
       updatedAt: string;
       createdAt: string;
+    }>
+  >;
+  listRepositoryProjects: (
+    ref: RepoRef,
+    params?: { includeClosed?: boolean; limit?: number },
+  ) => Promise<
+    Array<{
+      id: string;
+      number: number;
+      title: string;
+      url: string;
+      closed: boolean;
+      updatedAt: string;
+    }>
+  >;
+  listProjectTodoIssues: (
+    ref: RepoRef,
+    projectNumber: number,
+    params?: { limit?: number },
+  ) => Promise<
+    Array<{
+      itemId: string;
+      issueNumber: number;
+      title: string;
+      url: string;
+      state: 'open' | 'closed';
+      labels: string[];
+      statusName: string | null;
+      repositoryFullName: string;
     }>
   >;
 };
@@ -837,6 +869,131 @@ export function buildServer(services: AppServices) {
     });
   });
 
+  app.get('/api/v1/github/projects', async (request, reply) => {
+    const query = request.query as { owner?: string; repo?: string; state?: string; limit?: string };
+    const owner = query.owner?.trim();
+    const repo = query.repo?.trim();
+    if (!owner || !repo) {
+      return reply.status(400).send({ error: 'owner_and_repo_required' });
+    }
+    const includeClosed = query.state === 'all';
+    const parsedLimit = Number.parseInt(query.limit ?? '100', 10);
+    const projects = await services.github.listRepositoryProjects(
+      { owner, repo },
+      {
+        includeClosed,
+        limit: Number.isFinite(parsedLimit) ? parsedLimit : 100,
+      },
+    );
+
+    return ProjectListResponseSchema.parse({
+      generated_at: new Date().toISOString(),
+      owner,
+      repo,
+      items: projects.map((project) => ({
+        id: project.id,
+        number: project.number,
+        title: project.title,
+        url: project.url,
+        closed: project.closed,
+        updated_at: project.updatedAt,
+      })),
+    });
+  });
+
+  app.get('/api/v1/github/project-todos', async (request, reply) => {
+    const query = request.query as { owner?: string; repo?: string; project_number?: string; limit?: string };
+    const owner = query.owner?.trim();
+    const repo = query.repo?.trim();
+    const projectNumber = Number.parseInt(query.project_number ?? '', 10);
+    if (!owner || !repo || !Number.isInteger(projectNumber) || projectNumber <= 0) {
+      return reply.status(400).send({ error: 'owner_repo_and_project_number_required' });
+    }
+
+    const parsedLimit = Number.parseInt(query.limit ?? '250', 10);
+    const todos = await services.github.listProjectTodoIssues(
+      { owner, repo },
+      projectNumber,
+      {
+        limit: Number.isFinite(parsedLimit) ? parsedLimit : 250,
+      },
+    );
+
+    return ProjectTodoListResponseSchema.parse({
+      generated_at: new Date().toISOString(),
+      owner,
+      repo,
+      project_number: projectNumber,
+      items: todos.map((todo) => ({
+        item_id: todo.itemId,
+        issue_number: todo.issueNumber,
+        title: todo.title,
+        url: todo.url,
+        state: todo.state,
+        labels: todo.labels,
+        status_name: todo.statusName,
+        repository_full_name: todo.repositoryFullName,
+      })),
+    });
+  });
+
+  const dispatchIssueNumbers = async (params: {
+    repoRef: RepoRef;
+    issueNumbers: number[];
+    requestedBy: string;
+    deliveryPrefix: 'epic' | 'project_todo';
+  }) => {
+    const accepted: Array<{ issue_number: number; event_id: string }> = [];
+    const duplicates: Array<{ issue_number: number; event_id: string }> = [];
+
+    for (const issueNumber of params.issueNumbers) {
+      const deliveryId = `manual-${params.deliveryPrefix}-${params.repoRef.owner}-${params.repoRef.repo}-${issueNumber}-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 9)}`;
+      const payload = {
+        action: 'opened',
+        issue: {
+          number: issueNumber,
+          html_url: `https://github.com/${params.repoRef.owner}/${params.repoRef.repo}/issues/${issueNumber}`,
+        },
+        sender: {
+          login: params.requestedBy,
+        },
+        repository: {
+          name: params.repoRef.repo,
+          owner: { login: params.repoRef.owner },
+        },
+      };
+
+      const envelope = mapGithubWebhookToEnvelope({
+        eventName: 'issues',
+        deliveryId,
+        payload,
+      });
+
+      const eventResult = await services.workflowRepo.recordEventIfNew({
+        deliveryId,
+        eventType: envelope.event_type,
+        sourceOwner: params.repoRef.owner,
+        sourceRepo: params.repoRef.repo,
+        payload,
+      });
+
+      if (!eventResult.inserted) {
+        duplicates.push({ issue_number: issueNumber, event_id: eventResult.eventId });
+        continue;
+      }
+
+      services.orchestrator.enqueue({
+        eventId: eventResult.eventId,
+        envelope,
+      });
+      accepted.push({ issue_number: issueNumber, event_id: eventResult.eventId });
+    }
+
+    return { accepted, duplicates };
+  };
+
   app.post('/api/v1/epics/dispatch', async (request, reply) => {
     const auth = getAuthContext(request.headers);
     if (!auth.authenticated) {
@@ -869,60 +1026,82 @@ export function buildServer(services: AppServices) {
       return reply.status(400).send({ error: 'epic_numbers_required' });
     }
 
-    const accepted: Array<{ epic_number: number; event_id: string }> = [];
-    const duplicates: Array<{ epic_number: number; event_id: string }> = [];
-
-    for (const epicNumber of epicNumbers) {
-      const deliveryId = `manual-${repoRef.owner}-${repoRef.repo}-${epicNumber}-${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2, 9)}`;
-      const payload = {
-        action: 'opened',
-        issue: {
-          number: epicNumber,
-          html_url: `https://github.com/${repoRef.owner}/${repoRef.repo}/issues/${epicNumber}`,
-        },
-        sender: {
-          login: auth.userId,
-        },
-        repository: {
-          name: repoRef.repo,
-          owner: { login: repoRef.owner },
-        },
-      };
-
-      const envelope = mapGithubWebhookToEnvelope({
-        eventName: 'issues',
-        deliveryId,
-        payload,
-      });
-
-      const eventResult = await services.workflowRepo.recordEventIfNew({
-        deliveryId,
-        eventType: envelope.event_type,
-        sourceOwner: repoRef.owner,
-        sourceRepo: repoRef.repo,
-        payload,
-      });
-
-      if (!eventResult.inserted) {
-        duplicates.push({ epic_number: epicNumber, event_id: eventResult.eventId });
-        continue;
-      }
-
-      services.orchestrator.enqueue({
-        eventId: eventResult.eventId,
-        envelope,
-      });
-
-      accepted.push({ epic_number: epicNumber, event_id: eventResult.eventId });
-    }
+    const dispatch = await dispatchIssueNumbers({
+      repoRef,
+      issueNumbers: epicNumbers,
+      requestedBy: auth.userId,
+      deliveryPrefix: 'epic',
+    });
 
     return EpicDispatchResponseSchema.parse({
       repo_full_name: `${repoRef.owner}/${repoRef.repo}`,
       requested_by: auth.userId,
-      accepted,
-      duplicates,
+      accepted: dispatch.accepted.map((item) => ({
+        epic_number: item.issue_number,
+        event_id: item.event_id,
+      })),
+      duplicates: dispatch.duplicates.map((item) => ({
+        epic_number: item.issue_number,
+        event_id: item.event_id,
+      })),
+      dispatched_at: new Date().toISOString(),
+    });
+  });
+
+  app.post('/api/v1/project-todos/dispatch', async (request, reply) => {
+    const auth = getAuthContext(request.headers);
+    if (!auth.authenticated) {
+      return reply.status(401).send({ error: 'authentication_required' });
+    }
+    const dispatchRoles: UserRole[] = ['operator', 'reviewer', 'admin'];
+    if (!dispatchRoles.some((role) => auth.roles.has(role))) {
+      return reply.status(403).send({
+        error: 'forbidden',
+        required_roles: dispatchRoles,
+      });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = parseJsonBody(request.body);
+    } catch {
+      return reply.status(400).send({ error: 'invalid_json' });
+    }
+
+    const fullName = typeof body.repo_full_name === 'string' ? body.repo_full_name : '';
+    const repoRef = splitRepoFullName(fullName);
+    if (!repoRef) {
+      return reply.status(400).send({ error: 'repo_full_name_required' });
+    }
+
+    const issueNumbersRaw = Array.isArray(body.issue_numbers) ? body.issue_numbers : [];
+    const issueNumbers = [
+      ...new Set(issueNumbersRaw.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)),
+    ];
+    if (issueNumbers.length === 0) {
+      return reply.status(400).send({ error: 'issue_numbers_required' });
+    }
+    const projectNumberRaw = body.project_number;
+    const projectNumber =
+      typeof projectNumberRaw === 'number'
+        ? projectNumberRaw
+        : typeof projectNumberRaw === 'string'
+          ? Number.parseInt(projectNumberRaw, 10)
+          : null;
+
+    const dispatch = await dispatchIssueNumbers({
+      repoRef,
+      issueNumbers,
+      requestedBy: auth.userId,
+      deliveryPrefix: 'project_todo',
+    });
+
+    return ProjectTodoDispatchResponseSchema.parse({
+      repo_full_name: `${repoRef.owner}/${repoRef.repo}`,
+      project_number: Number.isInteger(projectNumber) && Number(projectNumber) > 0 ? Number(projectNumber) : null,
+      requested_by: auth.userId,
+      accepted: dispatch.accepted,
+      duplicates: dispatch.duplicates,
       dispatched_at: new Date().toISOString(),
     });
   });

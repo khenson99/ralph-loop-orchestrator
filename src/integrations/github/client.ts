@@ -39,6 +39,26 @@ export type PullRequestChecksSnapshot = {
   overallStatus: 'unknown' | 'pending' | 'passing' | 'failing';
 };
 
+export type RepositoryProjectSummary = {
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  closed: boolean;
+  updatedAt: string;
+};
+
+export type ProjectTodoIssue = {
+  itemId: string;
+  issueNumber: number;
+  title: string;
+  url: string;
+  state: 'open' | 'closed';
+  labels: string[];
+  statusName: string | null;
+  repositoryFullName: string;
+};
+
 export class GitHubClient {
   private readonly octokit: Octokit;
   private readonly defaultRepo: RepoRef;
@@ -438,5 +458,198 @@ export class GitHubClient {
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 
     return epicIssues.slice(0, limit);
+  }
+
+  async listRepositoryProjects(
+    ref: RepoRef,
+    params?: { includeClosed?: boolean; limit?: number },
+  ): Promise<RepositoryProjectSummary[]> {
+    const repo = this.resolveRepo(ref);
+    const includeClosed = params?.includeClosed ?? false;
+    const limit = Math.max(1, Math.min(params?.limit ?? 100, 100));
+
+    type GraphqlNode = {
+      id: string;
+      number: number;
+      title: string;
+      url: string;
+      closed: boolean;
+      updatedAt: string;
+    };
+
+    const data = await this.octokit.graphql<{
+      repository: {
+        projectsV2: {
+          nodes: GraphqlNode[];
+        };
+      };
+    }>(
+      `query RepoProjects($owner: String!, $repo: String!, $first: Int!) {
+        repository(owner: $owner, name: $repo) {
+          projectsV2(first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) {
+            nodes {
+              id
+              number
+              title
+              url
+              closed
+              updatedAt
+            }
+          }
+        }
+      }`,
+      {
+        owner: repo.owner,
+        repo: repo.repo,
+        first: limit,
+      },
+    );
+
+    const nodes = data.repository.projectsV2.nodes ?? [];
+    const filtered = nodes
+      .filter((project) => includeClosed || !project.closed)
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+
+    return filtered.slice(0, limit).map((project) => ({
+      id: project.id,
+      number: project.number,
+      title: project.title,
+      url: project.url,
+      closed: project.closed,
+      updatedAt: project.updatedAt,
+    }));
+  }
+
+  async listProjectTodoIssues(
+    ref: RepoRef,
+    projectNumber: number,
+    params?: { limit?: number },
+  ): Promise<ProjectTodoIssue[]> {
+    const repo = this.resolveRepo(ref);
+    const limit = Math.max(1, Math.min(params?.limit ?? 200, 500));
+
+    type ProjectItem = {
+      id: string;
+      content:
+        | {
+            __typename: 'Issue';
+            number: number;
+            title: string;
+            url: string;
+            state: 'OPEN' | 'CLOSED';
+            repository: {
+              nameWithOwner: string;
+            };
+            labels: {
+              nodes: Array<{ name: string }>;
+            };
+          }
+        | null;
+      fieldValues: {
+        nodes: Array<{
+          __typename: string;
+          name?: string;
+          field?: { name?: string };
+        }>;
+      };
+    };
+
+    const data = await this.octokit.graphql<{
+      repository: {
+        projectV2: {
+          items: {
+            nodes: ProjectItem[];
+          };
+        } | null;
+      };
+    }>(
+      `query ProjectTodoIssues($owner: String!, $repo: String!, $number: Int!, $first: Int!) {
+        repository(owner: $owner, name: $repo) {
+          projectV2(number: $number) {
+            items(first: $first) {
+              nodes {
+                id
+                content {
+                  __typename
+                  ... on Issue {
+                    number
+                    title
+                    url
+                    state
+                    repository {
+                      nameWithOwner
+                    }
+                    labels(first: 40) {
+                      nodes {
+                        name
+                      }
+                    }
+                  }
+                }
+                fieldValues(first: 20) {
+                  nodes {
+                    __typename
+                    ... on ProjectV2ItemFieldSingleSelectValue {
+                      name
+                      field {
+                        ... on ProjectV2SingleSelectField {
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      {
+        owner: repo.owner,
+        repo: repo.repo,
+        number: projectNumber,
+        first: limit,
+      },
+    );
+
+    const project = data.repository.projectV2;
+    if (!project) {
+      return [];
+    }
+
+    const repoFullName = `${repo.owner}/${repo.repo}`.toLowerCase();
+
+    const items = project.items.nodes
+      .filter((item) => item.content?.__typename === 'Issue')
+      .map((item) => {
+        const content = item.content as NonNullable<ProjectItem['content']>;
+        const statusValue = item.fieldValues.nodes
+          .filter((field) => field.__typename === 'ProjectV2ItemFieldSingleSelectValue')
+          .find((field) => String(field.field?.name ?? '').trim().toLowerCase() === 'status');
+        const statusName = statusValue?.name ? String(statusValue.name).trim() : null;
+        const labels = content.labels.nodes.map((label) => label.name).filter((name) => name.length > 0);
+        return {
+          itemId: item.id,
+          issueNumber: content.number,
+          title: content.title,
+          url: content.url,
+          state: content.state === 'OPEN' ? ('open' as const) : ('closed' as const),
+          labels,
+          statusName,
+          repositoryFullName: content.repository.nameWithOwner,
+        };
+      })
+      .filter((item) => item.repositoryFullName.toLowerCase() === repoFullName)
+      .filter((item) => item.state === 'open')
+      .filter((item) => {
+        const status = (item.statusName ?? '').toLowerCase();
+        if (!status) {
+          return true;
+        }
+        return status === 'todo' || status === 'to do' || status === 'backlog';
+      })
+      .sort((a, b) => a.issueNumber - b.issueNumber);
+
+    return items.slice(0, limit);
   }
 }

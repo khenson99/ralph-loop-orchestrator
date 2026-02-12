@@ -16,6 +16,7 @@ export function getLaneOrder() {
 
 export function applyBoardFilters(cards, filters, incidentMode) {
   const search = String(filters.search ?? '').trim().toLowerCase();
+  const repo = String(filters.repo ?? '').trim();
   const owner = String(filters.owner ?? '').trim();
   const lane = String(filters.lane ?? '').trim();
 
@@ -30,6 +31,10 @@ export function applyBoardFilters(cards, filters, incidentMode) {
     }
 
     if (owner && card.owner.display_name !== owner) {
+      return false;
+    }
+
+    if (repo && card.source?.full_name !== repo) {
       return false;
     }
 
@@ -50,6 +55,27 @@ export function applyBoardFilters(cards, filters, incidentMode) {
 
     return true;
   });
+}
+
+function sortCards(cards, sortBy) {
+  const mode = String(sortBy ?? 'updated_desc');
+  const sorted = [...cards];
+  switch (mode) {
+    case 'repo_asc':
+      sorted.sort((a, b) => String(a.source?.full_name ?? '').localeCompare(String(b.source?.full_name ?? '')));
+      break;
+    case 'repo_desc':
+      sorted.sort((a, b) => String(b.source?.full_name ?? '').localeCompare(String(a.source?.full_name ?? '')));
+      break;
+    case 'title_asc':
+      sorted.sort((a, b) => a.title.localeCompare(b.title));
+      break;
+    case 'updated_desc':
+    default:
+      sorted.sort((a, b) => Date.parse(b.timestamps.last_updated_at) - Date.parse(a.timestamps.last_updated_at));
+      break;
+  }
+  return sorted;
 }
 
 export function computeNeedsHumanQueue(cards) {
@@ -74,7 +100,10 @@ export function renderBoard(dom, state, callbacks) {
   }
 
   const cards = Object.values(board.cards);
-  const filtered = applyBoardFilters(cards, state.filters, state.incidentMode);
+  const filtered = sortCards(
+    applyBoardFilters(cards, state.filters, state.incidentMode),
+    state.filters.sort,
+  );
   const grouped = new Map(LANE_ORDER.map((lane) => [lane.id, []]));
 
   for (const card of filtered) {
@@ -160,6 +189,19 @@ export function renderBoard(dom, state, callbacks) {
   });
 
   const owners = [...new Set(cards.map((card) => card.owner.display_name))].sort((a, b) => a.localeCompare(b));
+  const repos = [...new Set(cards.map((card) => String(card.source?.full_name ?? '')).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  const repoOptions = ['<option value="">All repos</option>']
+    .concat(
+      repos.map(
+        (repo) =>
+          `<option value="${escapeHtml(repo)}" ${state.filters.repo === repo ? 'selected' : ''}>${escapeHtml(repo)}</option>`,
+      ),
+    )
+    .join('');
+  dom.repoFilter.innerHTML = repoOptions;
   const ownerOptions = ['<option value="">All owners</option>']
     .concat(
       owners.map(
@@ -179,4 +221,8 @@ export function renderBoard(dom, state, callbacks) {
     )
     .join('');
   dom.laneFilter.innerHTML = laneOptions;
+
+  if (dom.sortBy) {
+    dom.sortBy.value = state.filters.sort ?? 'updated_desc';
+  }
 }

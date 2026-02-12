@@ -71,6 +71,8 @@ const githubStub: Parameters<typeof buildServer>[0]['github'] = {
   }),
   listAccessibleRepositories: async () => [],
   listEpicIssues: async () => [],
+  listRepositoryProjects: async () => [],
+  listProjectTodoIssues: async () => [],
 };
 
 const runtimeSupervisorStub: Parameters<typeof buildServer>[0]['runtimeSupervisor'] = {

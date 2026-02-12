@@ -30,6 +30,9 @@ Structured reviewer output used to gate approvals and auto-merge.
 - `GET /api/v1/runtime/processes`
 - `GET /api/v1/runtime/processes/:processId/logs`
 - `POST /api/v1/runtime/processes/:processId/actions/:action`
+- `GET /api/v1/github/projects?owner=...&repo=...`
+- `GET /api/v1/github/project-todos?owner=...&repo=...&project_number=...`
+- `POST /api/v1/project-todos/dispatch`
 - `GET /api/v1/stream?topics=board,task_<id>,runtime` (SSE)
 
 All JSON responses above are schema-validated before returning.

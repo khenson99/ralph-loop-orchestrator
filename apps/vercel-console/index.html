@@ -52,8 +52,15 @@
         </div>
         <div class="board-toolbar">
           <input id="searchInput" type="search" placeholder="Search tasks, tags, owners" />
+          <select id="repoFilter"><option value="">All repos</option></select>
           <select id="ownerFilter"><option value="">All owners</option></select>
           <select id="laneFilter"><option value="">All lanes</option></select>
+          <select id="sortBy">
+            <option value="updated_desc">Sort: Recently Updated</option>
+            <option value="repo_asc">Sort: Repo A-Z</option>
+            <option value="repo_desc">Sort: Repo Z-A</option>
+            <option value="title_asc">Sort: Title A-Z</option>
+          </select>
           <select id="savedViews"><option value="">Saved views</option></select>
           <button id="saveCurrentView" class="btn-ghost" type="button">Save View</button>
           <button id="clearFilters" class="btn-ghost" type="button">Clear</button>
@@ -145,7 +152,7 @@
 
       <section id="view-service" class="view panel" data-view="service" hidden>
         <div class="panel-head">
-          <h2>Service Health</h2>
+          <h2>Service + Intake</h2>
           <div class="head-actions">
             <button id="refreshService" class="btn-primary" type="button">Refresh</button>
           </div>
@@ -158,6 +165,25 @@
           <article>
             <h3>/readyz</h3>
             <pre id="readyResult" class="mono">Loading...</pre>
+          </article>
+          <article class="settings-card">
+            <h3>Repo Project To-Dos</h3>
+            <p class="aux-sub">Select a repo, load its GitHub Project, pull Todo items, and dispatch to Ralph.</p>
+            <label for="intakeRepoSelect">Repository</label>
+            <select id="intakeRepoSelect"><option value="">Select repository</option></select>
+            <div class="row row-secondary">
+              <button id="loadProjects" class="btn-ghost" type="button">Load Projects</button>
+            </div>
+            <label for="intakeProjectSelect">Project</label>
+            <select id="intakeProjectSelect"><option value="">Select project</option></select>
+            <div class="row row-secondary">
+              <button id="loadProjectTodos" class="btn-ghost" type="button">Load To-Dos</button>
+            </div>
+            <label for="intakeTodoSelect">Project To-Dos</label>
+            <select id="intakeTodoSelect" multiple size="6"></select>
+            <div class="row row-secondary">
+              <button id="dispatchProjectTodos" class="btn-primary" type="button">Start Selected Tasks</button>
+            </div>
           </article>
         </div>
       </section>

@@ -332,6 +332,60 @@ export const EpicDispatchResponseSchema = z.object({
   dispatched_at: z.string().datetime(),
 });
 
+export const ProjectListResponseSchema = z.object({
+  generated_at: z.string().datetime(),
+  owner: z.string(),
+  repo: z.string(),
+  items: z.array(
+    z.object({
+      id: z.string(),
+      number: z.number().int(),
+      title: z.string(),
+      url: z.string().url(),
+      closed: z.boolean(),
+      updated_at: z.string().datetime(),
+    }),
+  ),
+});
+
+export const ProjectTodoListResponseSchema = z.object({
+  generated_at: z.string().datetime(),
+  owner: z.string(),
+  repo: z.string(),
+  project_number: z.number().int(),
+  items: z.array(
+    z.object({
+      item_id: z.string(),
+      issue_number: z.number().int(),
+      title: z.string(),
+      url: z.string().url(),
+      state: z.enum(['open', 'closed']),
+      labels: z.array(z.string()),
+      status_name: z.string().nullable(),
+      repository_full_name: z.string(),
+    }),
+  ),
+});
+
+export const ProjectTodoDispatchResponseSchema = z.object({
+  repo_full_name: z.string(),
+  project_number: z.number().int().nullable(),
+  requested_by: z.string(),
+  accepted: z.array(
+    z.object({
+      issue_number: z.number().int(),
+      event_id: z.string(),
+    }),
+  ),
+  duplicates: z.array(
+    z.object({
+      issue_number: z.number().int(),
+      event_id: z.string(),
+    }),
+  ),
+  dispatched_at: z.string().datetime(),
+});
+
 export const RuntimeProcessIdSchema = z.enum(['planner', 'team', 'reviewer']);
 export const RuntimeProcessStatusSchema = z.enum([
   'idle',
@@ -400,6 +454,9 @@ export type AuthMeResponse = z.infer<typeof AuthMeResponseSchema>;
 export type RepoListResponse = z.infer<typeof RepoListResponseSchema>;
 export type EpicListResponse = z.infer<typeof EpicListResponseSchema>;
 export type EpicDispatchResponse = z.infer<typeof EpicDispatchResponseSchema>;
+export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
+export type ProjectTodoListResponse = z.infer<typeof ProjectTodoListResponseSchema>;
+export type ProjectTodoDispatchResponse = z.infer<typeof ProjectTodoDispatchResponseSchema>;
 export type RuntimeProcessId = z.infer<typeof RuntimeProcessIdSchema>;
 export type RuntimeProcessStatus = z.infer<typeof RuntimeProcessStatusSchema>;
 export type RuntimeProcess = z.infer<typeof RuntimeProcessSchema>;

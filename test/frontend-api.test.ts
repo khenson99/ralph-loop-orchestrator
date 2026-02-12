@@ -92,6 +92,28 @@ const githubStub: Parameters<typeof buildServer>[0]['github'] = {
       createdAt: '2026-02-11T20:00:00Z',
     },
   ],
+  listRepositoryProjects: async () => [
+    {
+      id: 'PVT_x',
+      number: 7,
+      title: 'Ralph Delivery',
+      url: 'https://github.com/orgs/khenson99/projects/7',
+      closed: false,
+      updatedAt: '2026-02-11T22:00:00Z',
+    },
+  ],
+  listProjectTodoIssues: async () => [
+    {
+      itemId: 'PVTI_y',
+      issueNumber: 123,
+      title: 'Epic: Supervisor board',
+      url: 'https://github.com/khenson99/ralph-loop-orchestrator/issues/123',
+      state: 'open',
+      labels: ['epic'],
+      statusName: 'Todo',
+      repositoryFullName: 'khenson99/ralph-loop-orchestrator',
+    },
+  ],
 };
 
 const runtimeSupervisorStub: Parameters<typeof buildServer>[0]['runtimeSupervisor'] = {
@@ -188,6 +210,40 @@ describe('frontend API routes', () => {
     await app.close();
   });
 
+  it('lists repository projects and project todo issues', async () => {
+    const app = buildServer({
+      config,
+      dbClient: { ready: async () => true },
+      workflowRepo: createWorkflowRepoStub(),
+      github: githubStub,
+      orchestrator: { enqueue: vi.fn() },
+      runtimeSupervisor: runtimeSupervisorStub,
+      logger: createLogger('silent'),
+    });
+
+    const projectsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/github/projects?owner=khenson99&repo=ralph-loop-orchestrator',
+    });
+    expect(projectsResponse.statusCode).toBe(200);
+    const projectsBody = JSON.parse(projectsResponse.body) as {
+      items: Array<{ number: number; title: string }>;
+    };
+    expect(projectsBody.items[0]).toMatchObject({ number: 7, title: 'Ralph Delivery' });
+
+    const todosResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/github/project-todos?owner=khenson99&repo=ralph-loop-orchestrator&project_number=7',
+    });
+    expect(todosResponse.statusCode).toBe(200);
+    const todosBody = JSON.parse(todosResponse.body) as {
+      items: Array<{ issue_number: number; status_name: string }>;
+    };
+    expect(todosBody.items[0]).toMatchObject({ issue_number: 123, status_name: 'Todo' });
+
+    await app.close();
+  });
+
   it('dispatches selected epics into workflow queue', async () => {
     const enqueue = vi.fn();
     const app = buildServer({
@@ -218,6 +274,43 @@ describe('frontend API routes', () => {
     const body = JSON.parse(response.body) as { accepted: Array<{ epic_number: number }> };
     expect(body.accepted.length).toBe(2);
     expect(enqueue).toHaveBeenCalledTimes(2);
+
+    await app.close();
+  });
+
+  it('dispatches selected project todo issues into workflow queue', async () => {
+    const enqueue = vi.fn();
+    const app = buildServer({
+      config,
+      dbClient: { ready: async () => true },
+      workflowRepo: createWorkflowRepoStub(),
+      github: githubStub,
+      orchestrator: { enqueue },
+      runtimeSupervisor: runtimeSupervisorStub,
+      logger: createLogger('silent'),
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/project-todos/dispatch',
+      headers: {
+        'content-type': 'application/json',
+        'x-ralph-user': 'alice',
+        'x-ralph-roles': 'operator',
+      },
+      payload: JSON.stringify({
+        repo_full_name: 'khenson99/ralph-loop-orchestrator',
+        project_number: 7,
+        issue_numbers: [123],
+      }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body) as { accepted: Array<{ issue_number: number }>; project_number: number };
+    expect(body.project_number).toBe(7);
+    expect(body.accepted.length).toBe(1);
+    expect(body.accepted[0]?.issue_number).toBe(123);
+    expect(enqueue).toHaveBeenCalledTimes(1);
 
     await app.close();
   });
