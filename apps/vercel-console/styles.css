@@ -1,0 +1,113 @@
+:root {
+  --bg: #f4f2e9;
+  --panel: #fffdf6;
+  --text: #18230f;
+  --muted: #5f6b50;
+  --accent: #2f5d50;
+  --line: #dad2be;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 15% 10%, #dfe8d0 0, transparent 35%),
+    radial-gradient(circle at 85% 0, #d7e2d8 0, transparent 40%),
+    var(--bg);
+}
+
+.shell {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+  display: grid;
+  gap: 14px;
+}
+
+header h1 {
+  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+  margin: 0;
+  font-size: clamp(1.75rem, 2.5vw, 2.4rem);
+}
+
+.kicker {
+  margin: 0;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.sub {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 8px 20px rgba(23, 31, 15, 0.06);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 1.08rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  margin-bottom: 10px;
+  font-size: 0.95rem;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover {
+  opacity: 0.95;
+}
+
+.mono {
+  margin: 10px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8f5ea;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}

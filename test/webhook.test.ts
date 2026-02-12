@@ -25,6 +25,7 @@ const config = {
   requiredChecks: [],
   otelEnabled: false,
   dryRun: true,
+  corsAllowedOrigins: [],
 };
 
 afterEach(() => {

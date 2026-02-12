@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ralph Loop Orchestrator Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="kicker">Ralph Loop</p>
+        <h1>Orchestrator Console</h1>
+        <p class="sub">Hosted control panel for run and task status.</p>
+      </header>
+
+      <section class="card">
+        <h2>Service Status</h2>
+        <p><strong>API:</strong> <span id="apiBase"></span></p>
+        <pre id="health" class="mono">Loading /healthz ...</pre>
+        <pre id="ready" class="mono">Loading /readyz ...</pre>
+      </section>
+
+      <section class="card">
+        <h2>Inspect Run</h2>
+        <label for="runId">Run ID</label>
+        <input id="runId" type="text" placeholder="93f9e447-8594-4d20-acc8-1413aa3f0651" />
+        <button id="fetchRun">Fetch Run</button>
+        <pre id="runResult" class="mono">No run loaded.</pre>
+      </section>
+
+      <section class="card">
+        <h2>Inspect Task</h2>
+        <label for="taskId">Task ID</label>
+        <input id="taskId" type="text" placeholder="3c7eb025-7b53-451f-a95e-e191bac11d76" />
+        <button id="fetchTask">Fetch Task</button>
+        <pre id="taskResult" class="mono">No task loaded.</pre>
+      </section>
+
+      <section class="card">
+        <h2>Endpoints</h2>
+        <ul>
+          <li><code>POST /webhooks/github</code></li>
+          <li><code>GET /healthz</code></li>
+          <li><code>GET /readyz</code></li>
+          <li><code>GET /metrics</code></li>
+          <li><code>GET /api/runs/:runId</code></li>
+          <li><code>GET /api/tasks/:taskId</code></li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="./main.js" type="module"></script>
+  </body>
+</html>

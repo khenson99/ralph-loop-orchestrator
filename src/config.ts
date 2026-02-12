@@ -37,6 +37,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value ?? 'false').toLowerCase() === 'true'),
+  CORS_ALLOWED_ORIGINS: z.string().optional().default(''),
 });
 
 export type AppConfig = {
@@ -66,6 +67,7 @@ export type AppConfig = {
   requiredChecks: string[];
   otelEnabled: boolean;
   dryRun: boolean;
+  corsAllowedOrigins: string[];
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -123,5 +125,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .filter((v) => v.length > 0),
     otelEnabled: parsed.OTEL_ENABLED,
     dryRun,
+    corsAllowedOrigins: parsed.CORS_ALLOWED_ORIGINS.split(',')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0),
   };
 }

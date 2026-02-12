@@ -13,6 +13,7 @@ Standalone orchestration service for a Ralph Team Loop workflow:
   - `GET /metrics`
   - `GET /api/runs/:runId`
   - `GET /api/tasks/:taskId`
+- Optional static web console in `apps/vercel-console` for Vercel hosting
 - PostgreSQL persistence with Drizzle tables:
   - `workflow_runs`, `events`, `tasks`, `agent_attempts`, `artifacts`, `merge_decisions`
 - Codex adapter (Responses API) for:
@@ -31,6 +32,7 @@ Standalone orchestration service for a Ralph Team Loop workflow:
 
 1. Copy `.env.example` to `.env` and fill all secrets.
    - For local smoke tests without model keys, set `DRY_RUN=true` and provide `GITHUB_TOKEN`.
+   - Set `CORS_ALLOWED_ORIGINS` if a browser app (for example Vercel) calls this API.
 2. Install dependencies:
    - `npm install`
 3. Push schema:
