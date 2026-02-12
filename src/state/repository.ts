@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, lt, sql } from 'drizzle-orm';
 
 import yaml from 'js-yaml';
 
@@ -45,8 +45,12 @@ export class WorkflowRepository {
 
       return { inserted: true, eventId: row.id };
     } catch (error) {
+      // Postgres unique_violation error code (23505) — more robust than string matching
       const isUniqueViolation =
-        error instanceof Error && error.message.toLowerCase().includes('duplicate key');
+        error != null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        (error as { code: string }).code === '23505';
 
       if (!isUniqueViolation) {
         throw error;
@@ -433,6 +437,20 @@ export class WorkflowRepository {
       artifacts: runArtifacts,
       transitions,
     };
+  }
+
+  /**
+   * Purge processed delivery records older than the given retention period.
+   * Returns the number of rows deleted.
+   */
+  async purgeStaleDeliveries(retentionDays: number = 30): Promise<number> {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const deleted = await this.dbClient.db
+      .delete(events)
+      .where(and(eq(events.processed, true), lt(events.receivedAt, cutoff)))
+      .returning({ id: events.id });
+
+    return deleted.length;
   }
 
   async getTaskView(taskId: string) {
