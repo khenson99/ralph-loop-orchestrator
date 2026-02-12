@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, lt, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 
 import yaml from 'js-yaml';
 
@@ -378,6 +378,91 @@ export class WorkflowRepository {
       .update(workflowRuns)
       .set({ prNumber, updatedAt: sql`now()` })
       .where(eq(workflowRuns.id, runId));
+  }
+
+  async listBoardCards(limit: number = 100): Promise<
+    Array<{
+      runId: string;
+      issueNumber: number | null;
+      prNumber: number | null;
+      status: string;
+      currentStage: string;
+      updatedAt: string;
+      taskCounts: {
+        queued: number;
+        running: number;
+        retry: number;
+        completed: number;
+        failed: number;
+      };
+    }>
+  > {
+    const maxLimit = Math.max(1, Math.min(200, limit));
+    const runs = await this.dbClient.db
+      .select({
+        runId: workflowRuns.id,
+        issueNumber: workflowRuns.issueNumber,
+        prNumber: workflowRuns.prNumber,
+        status: workflowRuns.status,
+        currentStage: workflowRuns.currentStage,
+        updatedAt: workflowRuns.updatedAt,
+      })
+      .from(workflowRuns)
+      .orderBy(desc(workflowRuns.updatedAt))
+      .limit(maxLimit);
+
+    if (runs.length === 0) {
+      return [];
+    }
+
+    const runIds = runs.map((run) => run.runId);
+    const taskCounts = await this.dbClient.db
+      .select({
+        runId: tasks.workflowRunId,
+        status: tasks.status,
+        total: count(),
+      })
+      .from(tasks)
+      .where(inArray(tasks.workflowRunId, runIds))
+      .groupBy(tasks.workflowRunId, tasks.status);
+
+    const countsByRun = new Map<
+      string,
+      { queued: number; running: number; retry: number; completed: number; failed: number }
+    >();
+
+    for (const row of taskCounts) {
+      const current = countsByRun.get(row.runId) ?? {
+        queued: 0,
+        running: 0,
+        retry: 0,
+        completed: 0,
+        failed: 0,
+      };
+
+      const key = row.status as keyof typeof current;
+      if (key in current) {
+        current[key] += Number(row.total);
+      }
+
+      countsByRun.set(row.runId, current);
+    }
+
+    return runs.map((run) => ({
+      runId: run.runId,
+      issueNumber: run.issueNumber,
+      prNumber: run.prNumber,
+      status: run.status,
+      currentStage: run.currentStage,
+      updatedAt: run.updatedAt.toISOString(),
+      taskCounts: countsByRun.get(run.runId) ?? {
+        queued: 0,
+        running: 0,
+        retry: 0,
+        completed: 0,
+        failed: 0,
+      },
+    }));
   }
 
   async getRunView(runId: string) {
