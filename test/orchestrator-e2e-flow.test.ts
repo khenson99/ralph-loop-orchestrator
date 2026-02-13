@@ -211,6 +211,7 @@ describe('orchestrator E2E flow: webhook -> spec -> PR/checks -> merge decision'
     expect(github.hasRequiredChecksPassed).toHaveBeenCalledWith(
       321,
       config.requiredChecks,
+      expect.objectContaining({ owner: 'khenson99', repo: 'ralph-loop-orchestrator' }),
     );
     expect(github.approvePullRequest).toHaveBeenCalledTimes(1);
     expect(github.requestChanges).not.toHaveBeenCalled();
@@ -269,6 +270,7 @@ describe('orchestrator E2E flow: webhook -> spec -> PR/checks -> merge decision'
     expect(github.hasRequiredChecksPassed).toHaveBeenCalledWith(
       654,
       config.requiredChecks,
+      expect.objectContaining({ owner: 'khenson99', repo: 'ralph-loop-orchestrator' }),
     );
     expect(github.approvePullRequest).not.toHaveBeenCalled();
     expect(github.requestChanges).toHaveBeenCalledTimes(1);
