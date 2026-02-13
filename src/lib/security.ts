@@ -147,7 +147,7 @@ export function sanitiseUserInput(raw: string): SanitisationResult {
 
       // Neutralise by wrapping the matched fragment in visible brackets
       // so the LLM treats it as inert data rather than an instruction.
-      sanitised = sanitised.replace(rule.pattern, (matched) => `[BLOCKED:${rule.id}]`);
+      sanitised = sanitised.replace(rule.pattern, () => `[BLOCKED:${rule.id}]`);
     }
   }
 

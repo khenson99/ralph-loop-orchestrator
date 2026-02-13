@@ -515,6 +515,7 @@ export function buildServer(services: AppServices) {
 
   const unsubscribeRuntimeEvents = services.runtimeSupervisor.subscribe(publishRuntimeEvent);
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const fetchLivePrSnapshots = async (prEntries: Array<{ prNumber: number; sourceOwner: string; sourceRepo: string }>) => {
     const deduped = new Map<string, { prNumber: number; sourceOwner: string; sourceRepo: string }>();
     for (const entry of prEntries) {
@@ -2141,7 +2142,6 @@ export function buildServer(services: AppServices) {
   app.get('/api/v1/boards/default', async () => {
     const rows = await services.workflowRepo.listBoardCards();
     const projected = projectBoardCards(rows, {});
-    const grouped = groupCardsByLane(projected);
 
     const laneCards = new Map<LaneId, string[]>();
     for (const lane of laneOrder) {
