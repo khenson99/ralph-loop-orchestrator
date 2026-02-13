@@ -1,0 +1,1476 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ralph Loop Orchestrator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-a: #f6f8f9;
+        --bg-b: #e9f1ef;
+        --panel: #ffffff;
+        --panel-quiet: #f3f7f5;
+        --text: #1f2d2d;
+        --text-soft: #4f6764;
+        --line: #c9d8d4;
+        --accent: #0e766e;
+        --accent-soft: #ddf5f1;
+        --warn: #a95b16;
+        --warn-soft: #ffe8d4;
+        --danger: #9a2a2a;
+        --danger-soft: #ffe1df;
+        --ok: #1f7a43;
+        --ok-soft: #dbf6e5;
+        --shadow: 0 16px 32px rgba(12, 24, 24, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Avenir Next", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 420px at 20% -10%, #d6ece7 0%, transparent 65%),
+          radial-gradient(900px 420px at 95% 4%, #f9ebdb 0%, transparent 70%),
+          linear-gradient(180deg, var(--bg-a), var(--bg-b));
+        min-height: 100vh;
+      }
+
+      .shell {
+        max-width: 1680px;
+        margin: 0 auto;
+        padding: 20px 20px 24px;
+      }
+
+      .topbar {
+        display: grid;
+        grid-template-columns: minmax(220px, 1.2fr) minmax(320px, 2fr);
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
+      .brand,
+      .controls {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+      }
+
+      .brand {
+        padding: 16px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 1.35rem;
+      }
+
+      .meta {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.82rem;
+        color: var(--text-soft);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .controls {
+        padding: 14px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .control-row {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: 1.3fr 1fr 1fr auto;
+      }
+
+      input,
+      select,
+      button,
+      textarea {
+        font: inherit;
+        color: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+
+      button {
+        border: 1px solid transparent;
+        border-radius: 10px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .btn-ghost {
+        background: var(--panel-quiet);
+        border-color: var(--line);
+      }
+
+      .status-banner {
+        display: none;
+        background: var(--warn-soft);
+        border: 1px solid #efc39e;
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 0.92rem;
+        margin-bottom: 12px;
+      }
+
+      .status-banner[data-visible="true"] {
+        display: block;
+      }
+
+      .workspace {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: minmax(580px, 2fr) minmax(360px, 1fr);
+      }
+
+      .runtime-shell {
+        margin-top: 14px;
+      }
+
+      .runtime-grid {
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+        grid-template-columns: minmax(260px, 1fr) minmax(220px, 1fr) minmax(420px, 2fr);
+        align-items: start;
+      }
+
+      .runtime-controls {
+        display: grid;
+        gap: 8px;
+      }
+
+      .runtime-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .runtime-status-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .runtime-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel-quiet);
+        padding: 8px;
+        display: grid;
+        gap: 6px;
+      }
+
+      .runtime-card[data-selected="true"] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .runtime-log-wrap pre {
+        min-height: 240px;
+        max-height: 360px;
+        overflow: auto;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        min-height: 0;
+      }
+
+      .panel-head {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .board-wrap {
+        overflow-x: auto;
+        padding: 12px;
+      }
+
+      .lanes {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(220px, 1fr);
+        gap: 10px;
+        min-height: 62vh;
+      }
+
+      .lane {
+        border: 1px solid var(--line);
+        background: var(--panel-quiet);
+        border-radius: 12px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 100%;
+      }
+
+      .lane-head {
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 0.84rem;
+      }
+
+      .lane-head .lane-name {
+        font-weight: 600;
+      }
+
+      .lane-body {
+        padding: 8px;
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: #fff;
+        padding: 9px;
+        display: grid;
+        gap: 7px;
+        text-align: left;
+      }
+
+      .card[data-selected="true"] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .card h3 {
+        margin: 0;
+        font-size: 0.9rem;
+        line-height: 1.3;
+      }
+
+      .pill-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.72rem;
+      }
+
+      .pill {
+        padding: 2px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .pill.ok {
+        background: var(--ok-soft);
+        border-color: #9dd3b4;
+        color: var(--ok);
+      }
+
+      .pill.warn {
+        background: var(--warn-soft);
+        border-color: #f1c297;
+        color: var(--warn);
+      }
+
+      .pill.danger {
+        background: var(--danger-soft);
+        border-color: #f0b5af;
+        color: var(--danger);
+      }
+
+      .detail {
+        display: grid;
+        grid-template-rows: auto auto auto 1fr;
+        min-height: 78vh;
+      }
+
+      .detail-main {
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .detail-main h3 {
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .action-grid {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .timeline {
+        overflow: auto;
+        padding: 10px 12px 14px;
+      }
+
+      .event {
+        border-left: 2px solid var(--line);
+        margin-left: 6px;
+        padding: 0 0 11px 12px;
+      }
+
+      .event strong {
+        display: block;
+        font-size: 0.9rem;
+      }
+
+      .event .event-meta {
+        color: var(--text-soft);
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.74rem;
+        margin-bottom: 5px;
+      }
+
+      .tabs {
+        padding: 8px 12px;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 8px;
+      }
+
+      .tabs button[aria-pressed="true"] {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.76rem;
+        background: var(--panel-quiet);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .kbd-hint {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.72rem;
+        color: var(--text-soft);
+      }
+
+      @media (max-width: 1200px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .detail {
+          min-height: 58vh;
+        }
+
+        .control-row {
+          grid-template-columns: 1fr;
+        }
+
+        .runtime-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="topbar">
+        <section class="brand">
+          <h1>Ralph Loop Control Board</h1>
+          <div class="meta">
+            <span id="renderedAt">generated: --</span>
+            <span id="cardCount">cards: 0</span>
+            <span id="activeStatus">stream: connecting</span>
+            <span id="authStatus">auth: --</span>
+          </div>
+          <div class="kbd-hint">shortcuts: <kbd>/</kbd> search, <kbd>g b</kbd> board, <kbd>g c</kbd> card, <kbd>r</kbd> retry, <kbd>e</kbd> escalate, <kbd>b</kbd> block/unblock, <kbd>l</kbd> logs, <kbd>s</kbd> spec, <kbd>p</kbd> PR</div>
+        </section>
+        <section class="controls">
+          <div class="control-row">
+            <input id="searchInput" type="search" placeholder="Search task, issue, owner..." aria-label="Search cards" />
+            <select id="ownerFilter" aria-label="Owner role filter">
+              <option value="">All owners</option>
+            </select>
+            <select id="laneFilter" aria-label="Lane filter">
+              <option value="">All lanes</option>
+            </select>
+            <button id="refreshButton" class="btn-primary" type="button">Refresh</button>
+          </div>
+          <div class="control-row">
+            <input id="identityUser" type="text" placeholder="Identity user id (required for actions)" aria-label="Identity user id" />
+            <select id="identityRole" aria-label="Identity role">
+              <option value="viewer">viewer</option>
+              <option value="operator">operator</option>
+              <option value="reviewer">reviewer</option>
+              <option value="admin">admin</option>
+            </select>
+            <div class="kbd-hint" style="display:flex;align-items:center;padding:0 8px;">Action buttons are role-gated</div>
+            <button id="applyIdentity" class="btn-ghost" type="button">Apply Identity</button>
+          </div>
+          <div class="control-row">
+            <select id="repoSelect" aria-label="Repository selector">
+              <option value="">Select repository...</option>
+            </select>
+            <select id="epicSelect" aria-label="Epic selector" multiple size="1"></select>
+            <button id="loadEpicsButton" class="btn-ghost" type="button">Load Epics</button>
+            <button id="dispatchEpicsButton" class="btn-primary" type="button">Run Selected Epics</button>
+          </div>
+        </section>
+      </div>
+
+      <div id="statusBanner" class="status-banner" role="status" aria-live="polite"></div>
+
+      <div class="workspace">
+        <section class="panel" aria-label="Kanban board">
+          <div class="panel-head">
+            <h2>Kanban</h2>
+            <span class="kbd-hint">focus: <kbd>g b</kbd></span>
+          </div>
+          <div class="board-wrap" id="boardRegion" tabindex="-1">
+            <div id="lanes" class="lanes" role="list"></div>
+          </div>
+        </section>
+
+        <section class="panel detail" aria-label="Task detail" id="cardRegion" tabindex="-1">
+          <div class="panel-head">
+            <h2>Task Detail</h2>
+            <span class="kbd-hint">focus: <kbd>g c</kbd></span>
+          </div>
+          <div class="detail-main">
+            <h3 id="detailTitle">Select a card</h3>
+            <div id="detailMeta" class="pill-row"></div>
+            <div id="detailLinks" class="pill-row"></div>
+            <div class="action-grid">
+              <button data-action="retry" class="btn-ghost" type="button">Re-run task</button>
+              <button data-action="reassign" class="btn-ghost" type="button">Reassign</button>
+              <button data-action="escalate" class="btn-ghost" type="button">Escalate</button>
+              <button data-action="block-toggle" class="btn-ghost" type="button">Block / Unblock</button>
+            </div>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Detail panels">
+            <button type="button" role="tab" aria-pressed="true" data-panel="timeline">Timeline</button>
+            <button type="button" role="tab" aria-pressed="false" data-panel="spec">Spec</button>
+            <button type="button" role="tab" aria-pressed="false" data-panel="logs">Logs</button>
+            <button type="button" role="tab" aria-pressed="false" data-panel="pr">PR / CI</button>
+          </div>
+          <div class="timeline" id="detailBody"></div>
+        </section>
+      </div>
+
+      <section class="panel runtime-shell" aria-label="Loop supervisor">
+        <div class="panel-head">
+          <h2>Loop Supervisor</h2>
+          <span class="kbd-hint">planner / team / reviewer OS processes</span>
+        </div>
+        <div class="runtime-grid">
+          <div class="runtime-controls">
+            <select id="runtimeProcessSelect" aria-label="Runtime process selector">
+              <option value="planner">planner</option>
+              <option value="team">team</option>
+              <option value="reviewer">reviewer</option>
+            </select>
+            <input id="runtimeMaxIterations" type="number" min="1" max="500" placeholder="Max iterations (optional)" />
+            <input id="runtimePrdPath" type="text" placeholder="Planner PRD path (optional)" />
+            <div class="runtime-actions">
+              <button id="runtimeStart" class="btn-primary" type="button">Start</button>
+              <button id="runtimeStop" class="btn-ghost" type="button">Stop</button>
+              <button id="runtimeRestart" class="btn-ghost" type="button">Restart</button>
+            </div>
+          </div>
+          <div id="runtimeStatusList" class="runtime-status-list"></div>
+          <div class="runtime-log-wrap">
+            <pre id="runtimeLogTail">Select a process to view logs.</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+    <script type="module">
+      const LANE_ORDER = [
+        { id: "intake", label: "Intake", wip: 20 },
+        { id: "spec_drafting", label: "Spec Drafting", wip: 10 },
+        { id: "ready", label: "Ready", wip: 20 },
+        { id: "in_progress", label: "In Progress", wip: 10 },
+        { id: "in_review", label: "In Review", wip: 10 },
+        { id: "blocked", label: "Blocked", wip: 99 },
+        { id: "done", label: "Done", wip: 99 }
+      ];
+
+      const state = {
+        board: null,
+        selectedCardId: null,
+        detail: null,
+        activePanel: "timeline",
+        streamConnected: false,
+        pollTimer: null,
+        lastChord: null,
+        me: null,
+        repos: [],
+        selectedRepo: "",
+        epics: [],
+        runtime: {
+          processes: [],
+          selectedProcessId: "planner",
+          logsByProcess: {
+            planner: [],
+            team: [],
+            reviewer: []
+          }
+        },
+        identity: {
+          userId: window.localStorage.getItem("ralph_user") || "",
+          role: window.localStorage.getItem("ralph_role") || "viewer"
+        }
+      };
+
+      const dom = {
+        renderedAt: document.getElementById("renderedAt"),
+        cardCount: document.getElementById("cardCount"),
+        activeStatus: document.getElementById("activeStatus"),
+        authStatus: document.getElementById("authStatus"),
+        statusBanner: document.getElementById("statusBanner"),
+        searchInput: document.getElementById("searchInput"),
+        ownerFilter: document.getElementById("ownerFilter"),
+        laneFilter: document.getElementById("laneFilter"),
+        refreshButton: document.getElementById("refreshButton"),
+        identityUser: document.getElementById("identityUser"),
+        identityRole: document.getElementById("identityRole"),
+        applyIdentity: document.getElementById("applyIdentity"),
+        repoSelect: document.getElementById("repoSelect"),
+        epicSelect: document.getElementById("epicSelect"),
+        loadEpicsButton: document.getElementById("loadEpicsButton"),
+        dispatchEpicsButton: document.getElementById("dispatchEpicsButton"),
+        runtimeProcessSelect: document.getElementById("runtimeProcessSelect"),
+        runtimeMaxIterations: document.getElementById("runtimeMaxIterations"),
+        runtimePrdPath: document.getElementById("runtimePrdPath"),
+        runtimeStart: document.getElementById("runtimeStart"),
+        runtimeStop: document.getElementById("runtimeStop"),
+        runtimeRestart: document.getElementById("runtimeRestart"),
+        runtimeStatusList: document.getElementById("runtimeStatusList"),
+        runtimeLogTail: document.getElementById("runtimeLogTail"),
+        lanes: document.getElementById("lanes"),
+        detailTitle: document.getElementById("detailTitle"),
+        detailMeta: document.getElementById("detailMeta"),
+        detailLinks: document.getElementById("detailLinks"),
+        detailBody: document.getElementById("detailBody"),
+        boardRegion: document.getElementById("boardRegion"),
+        cardRegion: document.getElementById("cardRegion")
+      };
+
+      const ACTION_PERMISSIONS = {
+        retry: ["retry"],
+        reassign: ["reassign"],
+        escalate: ["escalate"],
+        block: ["block"],
+        unblock: ["unblock"],
+        "block-toggle": ["block", "unblock"]
+      };
+
+      const escapeHtml = (value) =>
+        String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+
+      const formatDate = (iso) => {
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return "--";
+        return date.toLocaleString();
+      };
+
+      const hoursInLane = (iso) => {
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return "--";
+        const diff = Math.max(0, Date.now() - date.getTime());
+        return (diff / 36e5).toFixed(1) + "h";
+      };
+
+      function authHeaders() {
+        const userId = String(state.identity.userId || "").trim();
+        const role = String(state.identity.role || "viewer").trim();
+        if (!userId) {
+          return {};
+        }
+        return {
+          "x-ralph-user": userId,
+          "x-ralph-roles": role
+        };
+      }
+
+      function canPerformAction(action) {
+        const required = ACTION_PERMISSIONS[action] || [];
+        if (required.length === 0) return false;
+        if (!state.me || !state.me.authenticated) return false;
+        return required.some((permission) => state.me.permissions.actions.includes(permission));
+      }
+
+      function updateAuthLabel() {
+        if (!state.me) {
+          dom.authStatus.textContent = "auth: --";
+          return;
+        }
+        if (!state.me.authenticated) {
+          dom.authStatus.textContent = "auth: anonymous viewer";
+          return;
+        }
+        dom.authStatus.textContent = "auth: " + state.me.user_id + " (" + state.me.roles.join(",") + ")";
+      }
+
+      function updateActionButtons() {
+        document.querySelectorAll("[data-action]").forEach((button) => {
+          const action = button.dataset.action;
+          if (!action) return;
+          const allowed = canPerformAction(action);
+          button.hidden = !allowed;
+          button.disabled = !allowed;
+        });
+      }
+
+      async function getJson(url, init) {
+        const mergedHeaders = {
+          ...(init && init.headers ? init.headers : {}),
+          ...authHeaders()
+        };
+        const res = await fetch(url, { ...(init || {}), headers: mergedHeaders });
+        if (!res.ok) {
+          let message = url + " returned " + res.status;
+          try {
+            const body = await res.json();
+            if (body && typeof body.error === "string") {
+              message = body.error;
+            }
+          } catch {
+          }
+          throw new Error(message);
+        }
+        return res.json();
+      }
+
+      function setBanner(message, visible) {
+        dom.statusBanner.textContent = message;
+        dom.statusBanner.dataset.visible = visible ? "true" : "false";
+      }
+
+      function updateStatusLabel() {
+        dom.activeStatus.textContent = "stream: " + (state.streamConnected ? "live" : "polling");
+      }
+
+      function renderOwnerFilter(cards) {
+        const owners = [...new Set(cards.map((card) => card.owner.display_name))].sort();
+        const current = dom.ownerFilter.value;
+        dom.ownerFilter.innerHTML =
+          '<option value="">All owners</option>' +
+          owners.map((name) => '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + "</option>").join("");
+        if (owners.includes(current)) {
+          dom.ownerFilter.value = current;
+        }
+      }
+
+      function renderLaneFilter() {
+        const current = dom.laneFilter.value;
+        dom.laneFilter.innerHTML =
+          '<option value="">All lanes</option>' +
+          LANE_ORDER.map((lane) => '<option value="' + lane.id + '">' + lane.label + "</option>").join("");
+        dom.laneFilter.value = current;
+      }
+
+      function renderRepoSelect() {
+        if (!(dom.repoSelect instanceof HTMLSelectElement)) return;
+        const current = state.selectedRepo || dom.repoSelect.value;
+        dom.repoSelect.innerHTML =
+          '<option value="">Select repository...</option>' +
+          state.repos
+            .map((repo) => '<option value="' + escapeHtml(repo.full_name) + '">' + escapeHtml(repo.full_name) + "</option>")
+            .join("");
+        if (current && state.repos.some((repo) => repo.full_name === current)) {
+          dom.repoSelect.value = current;
+          state.selectedRepo = current;
+        }
+      }
+
+      function renderEpicSelect() {
+        if (!(dom.epicSelect instanceof HTMLSelectElement)) return;
+        const selected = new Set(Array.from(dom.epicSelect.selectedOptions).map((option) => option.value));
+        dom.epicSelect.innerHTML = state.epics
+          .map((epic) => {
+            const short = epic.title.length > 88 ? epic.title.slice(0, 85) + "..." : epic.title;
+            return '<option value="' + String(epic.number) + '">' + escapeHtml("#" + epic.number + " " + short) + "</option>";
+          })
+          .join("");
+        dom.epicSelect.size = Math.min(Math.max(state.epics.length, 1), 6);
+        Array.from(dom.epicSelect.options).forEach((option) => {
+          option.selected = selected.has(option.value);
+        });
+      }
+
+      function runtimeStatusPill(status) {
+        if (status === "running") return "ok";
+        if (status === "failed") return "danger";
+        if (status === "completed") return "ok";
+        if (status === "stopping") return "warn";
+        if (status === "starting") return "warn";
+        return "";
+      }
+
+      function renderRuntime() {
+        if (dom.runtimeProcessSelect instanceof HTMLSelectElement) {
+          dom.runtimeProcessSelect.value = state.runtime.selectedProcessId;
+        }
+
+        const processes = Array.isArray(state.runtime.processes) ? state.runtime.processes : [];
+        if (dom.runtimeStatusList) {
+          dom.runtimeStatusList.innerHTML = processes
+            .map((item) => {
+              const selected = item.process_id === state.runtime.selectedProcessId;
+              return `
+                <button class="runtime-card" type="button" data-runtime-process="${escapeHtml(item.process_id)}" data-selected="${selected ? "true" : "false"}">
+                  <strong>${escapeHtml(item.display_name)}</strong>
+                  <div class="pill-row">
+                    <span class="pill ${runtimeStatusPill(item.status)}">${escapeHtml(item.status)}</span>
+                    <span class="pill">run: ${item.run_count}</span>
+                    <span class="pill">${item.pid ? "pid " + item.pid : "pid -"}</span>
+                  </div>
+                  <div class="kbd-hint">
+                    started: ${escapeHtml(item.last_started_at ? formatDate(item.last_started_at) : "--")}
+                  </div>
+                </button>
+              `;
+            })
+            .join("");
+        }
+
+        const selectedLogs = state.runtime.logsByProcess[state.runtime.selectedProcessId] || [];
+        const formatted = selectedLogs
+          .slice(-250)
+          .map((entry) => {
+            const t = formatDate(entry.timestamp);
+            return "[" + t + "] " + entry.stream + " | " + entry.line;
+          })
+          .join("\n");
+        if (dom.runtimeLogTail instanceof HTMLElement) {
+          dom.runtimeLogTail.textContent = formatted || "No log lines for selected process yet.";
+        }
+      }
+
+      function cardMatchesFilters(card) {
+        const q = dom.searchInput.value.trim().toLowerCase();
+        const owner = dom.ownerFilter.value;
+        const lane = dom.laneFilter.value;
+        const haystack = [card.title, card.owner.display_name, card.card_id, ...(card.tags || [])]
+          .join(" ")
+          .toLowerCase();
+        if (q && !haystack.includes(q)) return false;
+        if (owner && card.owner.display_name !== owner) return false;
+        if (lane && card.lane !== lane) return false;
+        return true;
+      }
+
+      function statusPill(card) {
+        if (card.signals.ci_status === "passing") return '<span class="pill ok">ci: passing</span>';
+        if (card.signals.ci_status === "failing") return '<span class="pill danger">ci: failing</span>';
+        if (card.lane === "blocked") return '<span class="pill danger">blocked</span>';
+        if (card.lane === "done") return '<span class="pill ok">done</span>';
+        return '<span class="pill warn">active</span>';
+      }
+
+      function renderBoard() {
+        if (!state.board) return;
+        const cards = Object.values(state.board.cards);
+        renderOwnerFilter(cards);
+        renderLaneFilter();
+
+        dom.cardCount.textContent = "cards: " + cards.length;
+        dom.renderedAt.textContent = "generated: " + formatDate(state.board.generated_at);
+
+        const grouped = {};
+        for (const lane of LANE_ORDER) grouped[lane.id] = [];
+        for (const card of cards) {
+          if (!cardMatchesFilters(card)) continue;
+          if (!grouped[card.lane]) grouped[card.lane] = [];
+          grouped[card.lane].push(card);
+        }
+
+        dom.lanes.innerHTML = LANE_ORDER.map((lane) => {
+          const laneCards = grouped[lane.id] || [];
+          return `
+            <section class="lane" role="listitem" aria-label="${lane.label}">
+              <div class="lane-head">
+                <span class="lane-name">${lane.label}</span>
+                <span>${laneCards.length} / ${lane.wip}</span>
+              </div>
+              <div class="lane-body">
+                ${
+                  laneCards.length === 0
+                    ? '<div class="pill">No cards</div>'
+                    : laneCards
+                        .map(
+                          (card) => `
+                    <button class="card" type="button" data-card-id="${card.card_id}" data-selected="${state.selectedCardId === card.card_id}">
+                      <h3>${escapeHtml(card.title)}</h3>
+                      <div class="pill-row">
+                        <span class="pill">${escapeHtml(card.priority)}</span>
+                        <span class="pill">${escapeHtml(card.owner.display_name)}</span>
+                        <span class="pill">attempts: ${card.attempt.attempt_count}</span>
+                      </div>
+                      <div class="pill-row">
+                        ${statusPill(card)}
+                        <span class="pill">aging: ${hoursInLane(card.timestamps.lane_entered_at)}</span>
+                      </div>
+                    </button>
+                  `,
+                        )
+                        .join("")
+                }
+              </div>
+            </section>
+          `;
+        }).join("");
+      }
+
+      function renderDetail() {
+        const detail = state.detail;
+        if (!detail) {
+          dom.detailTitle.textContent = "Select a card";
+          dom.detailMeta.innerHTML = "";
+          dom.detailLinks.innerHTML = "";
+          dom.detailBody.innerHTML = '<div class="pill">No detail loaded</div>';
+          updateActionButtons();
+          return;
+        }
+
+        const card = detail.card;
+        dom.detailTitle.textContent = card.title;
+        dom.detailMeta.innerHTML = `
+          <span class="pill">${escapeHtml(card.card_id)}</span>
+          <span class="pill">${escapeHtml(card.lane)}</span>
+          <span class="pill">${escapeHtml(card.source.full_name)}</span>
+          <span class="pill">${escapeHtml(detail.task.owner_role)}</span>
+          <span class="pill">updated: ${escapeHtml(formatDate(card.timestamps.last_updated_at))}</span>
+        `;
+
+        const links = [];
+        if (card.links.github_issue_url) {
+          links.push('<a class="pill" target="_blank" rel="noreferrer" href="' + escapeHtml(card.links.github_issue_url) + '">Issue</a>');
+        }
+        if (card.links.pull_request_url) {
+          links.push('<a class="pill" id="prLink" target="_blank" rel="noreferrer" href="' + escapeHtml(card.links.pull_request_url) + '">PR</a>');
+        }
+        dom.detailLinks.innerHTML = links.join("");
+        updateActionButtons();
+
+        if (state.activePanel === "timeline") {
+          dom.detailBody.innerHTML =
+            detail.timeline.length === 0
+              ? '<div class="pill">No events yet</div>'
+              : detail.timeline
+                  .map(
+                    (event) => `
+                <article class="event">
+                  <strong>${escapeHtml(event.message)}</strong>
+                  <div class="event-meta">${escapeHtml(formatDate(event.occurred_at))} · ${escapeHtml(event.actor.id)} · ${escapeHtml(event.event_type)}</div>
+                  <pre>${escapeHtml(JSON.stringify(event.data, null, 2))}</pre>
+                </article>
+              `,
+                  )
+                  .join("");
+          return;
+        }
+
+        if (state.activePanel === "spec") {
+          const specArtifact = detail.artifacts.find((artifact) => artifact.kind.includes("spec"));
+          const specBody = specArtifact ? specArtifact.content : "No spec artifact found for this task.";
+          dom.detailBody.innerHTML = "<pre>" + escapeHtml(specBody) + "</pre>";
+          return;
+        }
+
+        if (state.activePanel === "logs") {
+          const lines = detail.attempts.map((attempt) => ({
+            agent: attempt.agent_role,
+            status: attempt.status,
+            created_at: attempt.created_at,
+            error: attempt.error,
+            output: attempt.output
+          }));
+          dom.detailBody.innerHTML = "<pre>" + escapeHtml(JSON.stringify(lines, null, 2)) + "</pre>";
+          return;
+        }
+
+        if (!detail.pull_request) {
+          const prSummary = {
+            issue_url: card.links.github_issue_url,
+            pr_url: card.links.pull_request_url,
+            ci_status: card.signals.ci_status,
+            llm_review_verdict: card.signals.llm_review_verdict,
+            run_stage: detail.run.current_stage
+          };
+          dom.detailBody.innerHTML = "<pre>" + escapeHtml(JSON.stringify(prSummary, null, 2)) + "</pre>";
+          return;
+        }
+
+        const checkItems = detail.pull_request.checks.length === 0
+          ? '<div class="pill">No check runs found for current head SHA.</div>'
+          : detail.pull_request.checks
+              .map((check) => {
+                const pillClass =
+                  check.conclusion === "success"
+                    ? "ok"
+                    : check.conclusion === "failure" || check.conclusion === "timed_out" || check.conclusion === "cancelled"
+                      ? "danger"
+                      : "warn";
+                return `
+                  <article class="event">
+                    <strong>${escapeHtml(check.name)} ${check.required ? "(required)" : ""}</strong>
+                    <div class="event-meta">${escapeHtml(check.status)} · ${escapeHtml(check.conclusion || "pending")}</div>
+                    <div class="pill-row">
+                      <span class="pill ${pillClass}">${escapeHtml(check.conclusion || "pending")}</span>
+                      ${
+                        check.details_url
+                          ? '<a class="pill" href="' + escapeHtml(check.details_url) + '" target="_blank" rel="noreferrer">details</a>'
+                          : ""
+                      }
+                    </div>
+                  </article>
+                `;
+              })
+              .join("");
+
+        dom.detailBody.innerHTML = `
+          <div class="pill-row" style="margin-bottom:8px;">
+            <a class="pill" href="${escapeHtml(detail.pull_request.url)}" target="_blank" rel="noreferrer">PR #${detail.pull_request.number}</a>
+            <span class="pill">${escapeHtml(detail.pull_request.state)}</span>
+            <span class="pill ${detail.pull_request.overall_status === "passing" ? "ok" : detail.pull_request.overall_status === "failing" ? "danger" : "warn"}">ci: ${escapeHtml(detail.pull_request.overall_status)}</span>
+          </div>
+          ${checkItems}
+        `;
+      }
+
+      async function loadAuth() {
+        state.me = await getJson("/api/v1/auth/me");
+        updateAuthLabel();
+        updateActionButtons();
+      }
+
+      async function loadRepos() {
+        const payload = await getJson("/api/v1/github/repos?limit=250");
+        state.repos = Array.isArray(payload.items) ? payload.items : [];
+        if (!state.selectedRepo && state.repos.length > 0) {
+          state.selectedRepo = state.repos[0].full_name;
+        }
+        renderRepoSelect();
+      }
+
+      async function loadEpicsForSelectedRepo() {
+        const selectedRepo = dom.repoSelect instanceof HTMLSelectElement ? dom.repoSelect.value : "";
+        if (!selectedRepo) {
+          state.epics = [];
+          renderEpicSelect();
+          return;
+        }
+        state.selectedRepo = selectedRepo;
+        const [owner, repo] = selectedRepo.split("/");
+        if (!owner || !repo) {
+          state.epics = [];
+          renderEpicSelect();
+          return;
+        }
+
+        const payload = await getJson(
+          "/api/v1/github/epics?owner=" + encodeURIComponent(owner) + "&repo=" + encodeURIComponent(repo) + "&state=open&limit=250",
+        );
+        state.epics = Array.isArray(payload.items) ? payload.items : [];
+        renderEpicSelect();
+      }
+
+      async function dispatchSelectedEpics() {
+        const selectedRepo = dom.repoSelect instanceof HTMLSelectElement ? dom.repoSelect.value : "";
+        if (!selectedRepo) {
+          setBanner("Select a repository before dispatching epics.", true);
+          return;
+        }
+        if (!(dom.epicSelect instanceof HTMLSelectElement)) return;
+        const epicNumbers = Array.from(dom.epicSelect.selectedOptions)
+          .map((option) => Number(option.value))
+          .filter((value) => Number.isInteger(value) && value > 0);
+        if (epicNumbers.length === 0) {
+          setBanner("Select one or more epics to dispatch.", true);
+          return;
+        }
+
+        const response = await getJson("/api/v1/epics/dispatch", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            repo_full_name: selectedRepo,
+            epic_numbers: epicNumbers
+          })
+        });
+
+        const acceptedCount = Array.isArray(response.accepted) ? response.accepted.length : 0;
+        const duplicateCount = Array.isArray(response.duplicates) ? response.duplicates.length : 0;
+        setBanner(
+          "Dispatched " +
+            acceptedCount +
+            " epic(s)" +
+            (duplicateCount > 0 ? " · duplicates skipped: " + duplicateCount : "") +
+            ".",
+          true,
+        );
+        await refreshAll();
+      }
+
+      async function loadRuntimeProcesses() {
+        const payload = await getJson("/api/v1/runtime/processes");
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        state.runtime.processes = items;
+        if (!items.some((item) => item.process_id === state.runtime.selectedProcessId) && items.length > 0) {
+          state.runtime.selectedProcessId = items[0].process_id;
+        }
+        renderRuntime();
+      }
+
+      async function loadRuntimeLogs(processId) {
+        const id = processId || state.runtime.selectedProcessId;
+        if (!id) return;
+        const payload = await getJson(
+          "/api/v1/runtime/processes/" + encodeURIComponent(id) + "/logs?limit=500",
+        );
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        state.runtime.logsByProcess[id] = items;
+        renderRuntime();
+      }
+
+      async function performRuntimeAction(action) {
+        const processId =
+          dom.runtimeProcessSelect instanceof HTMLSelectElement
+            ? dom.runtimeProcessSelect.value
+            : state.runtime.selectedProcessId;
+        if (!processId) {
+          setBanner("Select a process first.", true);
+          return;
+        }
+        state.runtime.selectedProcessId = processId;
+        const reason = window.prompt("Reason for " + action + " on " + processId + ":", "") || "";
+        const payload = {
+          reason: reason.trim() || action + " requested from control board"
+        };
+        if (dom.runtimeMaxIterations instanceof HTMLInputElement) {
+          const value = Number(dom.runtimeMaxIterations.value);
+          if (Number.isFinite(value) && value > 0) {
+            payload.max_iterations = Math.floor(value);
+          }
+        }
+        if (processId === "planner" && dom.runtimePrdPath instanceof HTMLInputElement) {
+          const prd = dom.runtimePrdPath.value.trim();
+          if (prd) {
+            payload.prd_path = prd;
+          }
+        }
+
+        try {
+          await getJson(
+            "/api/v1/runtime/processes/" +
+              encodeURIComponent(processId) +
+              "/actions/" +
+              encodeURIComponent(action),
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(payload)
+            },
+          );
+          await loadRuntimeProcesses();
+          await loadRuntimeLogs(processId);
+          setBanner("", false);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Runtime action failed";
+          setBanner("Runtime action failed: " + message, true);
+        }
+      }
+
+      async function loadBoard() {
+        state.board = await getJson("/api/v1/boards/default");
+        const cards = Object.values(state.board.cards);
+        if (cards.length > 0 && !state.selectedCardId) {
+          state.selectedCardId = cards[0].card_id;
+        }
+        renderBoard();
+      }
+
+      async function loadDetail(taskId) {
+        state.detail = await getJson("/api/v1/tasks/" + encodeURIComponent(taskId) + "/detail");
+        state.selectedCardId = taskId;
+        renderBoard();
+        renderDetail();
+      }
+
+      async function refreshAll() {
+        await loadBoard();
+        if (state.selectedCardId) {
+          await loadDetail(state.selectedCardId);
+        } else {
+          renderDetail();
+        }
+        await loadRuntimeProcesses();
+        await loadRuntimeLogs(state.runtime.selectedProcessId);
+      }
+
+      async function performAction(action) {
+        if (!state.selectedCardId) return;
+        if (!canPerformAction(action)) {
+          setBanner("Not authorized for action: " + action + ".", true);
+          return;
+        }
+        let payload = { reason: "" };
+        if (action === "reassign") {
+          const owner = window.prompt("Reassign owner role (e.g. frontend, backend, qa):", "frontend");
+          if (!owner) return;
+          const reason = window.prompt("Reason for reassignment:", "Hand off to specialist") || "";
+          payload = { reason, new_owner_role: owner };
+        } else {
+          const reason = window.prompt("Reason for " + action + ":", "");
+          if (reason === null) return;
+          payload = { reason };
+        }
+
+        try {
+          await getJson("/api/v1/tasks/" + encodeURIComponent(state.selectedCardId) + "/actions/" + action, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          setBanner("", false);
+          await refreshAll();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Action failed";
+          setBanner("Action failed: " + message, true);
+        }
+      }
+
+      function startPollingFallback() {
+        if (state.pollTimer) return;
+        setBanner("Live updates unavailable. Using polling every 30 seconds.", true);
+        state.pollTimer = window.setInterval(() => {
+          refreshAll().catch((error) => console.error(error));
+        }, 30000);
+      }
+
+      function stopPollingFallback() {
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+        setBanner("", false);
+      }
+
+      function connectStream() {
+        const source = new EventSource("/api/v1/stream?topics=board,runtime");
+        source.addEventListener("open", () => {
+          state.streamConnected = true;
+          updateStatusLabel();
+          stopPollingFallback();
+        });
+
+        source.addEventListener("task.patch", async () => {
+          try {
+            await refreshAll();
+          } catch (error) {
+            console.error(error);
+          }
+        });
+
+        source.addEventListener("runtime.process", async () => {
+          try {
+            await loadRuntimeProcesses();
+          } catch (error) {
+            console.error(error);
+          }
+        });
+
+        source.addEventListener("runtime.log", (event) => {
+          try {
+            const payload = JSON.parse(event.data || "{}");
+            const processId = payload?.process_id;
+            const entry = payload?.entry;
+            if (typeof processId !== "string" || !entry || typeof entry.line !== "string") {
+              return;
+            }
+            if (!state.runtime.logsByProcess[processId]) {
+              state.runtime.logsByProcess[processId] = [];
+            }
+            state.runtime.logsByProcess[processId].push(entry);
+            state.runtime.logsByProcess[processId] = state.runtime.logsByProcess[processId].slice(-500);
+            if (state.runtime.selectedProcessId === processId) {
+              renderRuntime();
+            }
+          } catch {
+          }
+        });
+
+        source.onerror = () => {
+          state.streamConnected = false;
+          updateStatusLabel();
+          source.close();
+          startPollingFallback();
+        };
+      }
+
+      function updateTabButtons() {
+        document.querySelectorAll('.tabs button').forEach((button) => {
+          button.setAttribute("aria-pressed", button.dataset.panel === state.activePanel ? "true" : "false");
+        });
+      }
+
+      function registerEvents() {
+        if (dom.identityUser instanceof HTMLInputElement) {
+          dom.identityUser.value = state.identity.userId;
+        }
+        if (dom.identityRole instanceof HTMLSelectElement) {
+          dom.identityRole.value = state.identity.role;
+        }
+
+        dom.refreshButton.addEventListener("click", () => {
+          refreshAll().catch((error) => console.error(error));
+        });
+
+        dom.applyIdentity.addEventListener("click", () => {
+          state.identity.userId =
+            dom.identityUser instanceof HTMLInputElement ? dom.identityUser.value.trim() : "";
+          state.identity.role =
+            dom.identityRole instanceof HTMLSelectElement ? dom.identityRole.value : "viewer";
+          window.localStorage.setItem("ralph_user", state.identity.userId);
+          window.localStorage.setItem("ralph_role", state.identity.role);
+          loadAuth()
+            .then(() => refreshAll())
+            .catch((error) => {
+              const message = error instanceof Error ? error.message : "Failed to apply identity";
+              setBanner(message, true);
+            });
+        });
+
+        if (dom.repoSelect instanceof HTMLSelectElement) {
+          dom.repoSelect.addEventListener("change", () => {
+            state.selectedRepo = dom.repoSelect.value;
+          });
+        }
+
+        dom.loadEpicsButton.addEventListener("click", () => {
+          loadEpicsForSelectedRepo().catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to load epics";
+            setBanner(message, true);
+          });
+        });
+
+        dom.dispatchEpicsButton.addEventListener("click", () => {
+          dispatchSelectedEpics().catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to dispatch epics";
+            setBanner(message, true);
+          });
+        });
+
+        if (dom.runtimeProcessSelect instanceof HTMLSelectElement) {
+          dom.runtimeProcessSelect.addEventListener("change", () => {
+            state.runtime.selectedProcessId = dom.runtimeProcessSelect.value;
+            loadRuntimeLogs(state.runtime.selectedProcessId).catch((error) => {
+              const message = error instanceof Error ? error.message : "Failed to load runtime logs";
+              setBanner(message, true);
+            });
+          });
+        }
+
+        dom.runtimeStart.addEventListener("click", () => {
+          performRuntimeAction("start").catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to start process";
+            setBanner(message, true);
+          });
+        });
+        dom.runtimeStop.addEventListener("click", () => {
+          performRuntimeAction("stop").catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to stop process";
+            setBanner(message, true);
+          });
+        });
+        dom.runtimeRestart.addEventListener("click", () => {
+          performRuntimeAction("restart").catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to restart process";
+            setBanner(message, true);
+          });
+        });
+
+        dom.runtimeStatusList.addEventListener("click", (event) => {
+          const target = event.target.closest("[data-runtime-process]");
+          if (!target) return;
+          const processId = target.getAttribute("data-runtime-process");
+          if (!processId) return;
+          state.runtime.selectedProcessId = processId;
+          if (dom.runtimeProcessSelect instanceof HTMLSelectElement) {
+            dom.runtimeProcessSelect.value = processId;
+          }
+          loadRuntimeLogs(processId).catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to load runtime logs";
+            setBanner(message, true);
+          });
+        });
+
+        dom.searchInput.addEventListener("input", renderBoard);
+        dom.ownerFilter.addEventListener("change", renderBoard);
+        dom.laneFilter.addEventListener("change", renderBoard);
+
+        dom.lanes.addEventListener("click", (event) => {
+          const target = event.target.closest("[data-card-id]");
+          if (!target) return;
+          const taskId = target.getAttribute("data-card-id");
+          if (!taskId) return;
+          loadDetail(taskId).catch((error) => console.error(error));
+        });
+
+        document.querySelectorAll("[data-action]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const action = button.dataset.action;
+            if (!action) return;
+            if (action === "block-toggle") {
+              const next = state.detail?.task.status === "blocked" ? "unblock" : "block";
+              performAction(next).catch((error) => console.error(error));
+              return;
+            }
+            performAction(action).catch((error) => console.error(error));
+          });
+        });
+
+        document.querySelectorAll('.tabs button').forEach((button) => {
+          button.addEventListener("click", () => {
+            const panel = button.dataset.panel;
+            if (!panel) return;
+            state.activePanel = panel;
+            updateTabButtons();
+            renderDetail();
+          });
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "/" && event.target === document.body) {
+            event.preventDefault();
+            dom.searchInput.focus();
+            return;
+          }
+
+          if (event.key === "g") {
+            state.lastChord = "g";
+            window.setTimeout(() => {
+              state.lastChord = null;
+            }, 800);
+            return;
+          }
+
+          if (state.lastChord === "g" && event.key === "b") {
+            event.preventDefault();
+            dom.boardRegion.focus();
+            state.lastChord = null;
+            return;
+          }
+
+          if (state.lastChord === "g" && event.key === "c") {
+            event.preventDefault();
+            dom.cardRegion.focus();
+            state.lastChord = null;
+            return;
+          }
+
+          if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+            return;
+          }
+
+          if (event.key === "r") {
+            performAction("retry").catch((error) => console.error(error));
+          } else if (event.key === "e") {
+            performAction("escalate").catch((error) => console.error(error));
+          } else if (event.key === "b") {
+            const next = state.detail?.task.status === "blocked" ? "unblock" : "block";
+            performAction(next).catch((error) => console.error(error));
+          } else if (event.key === "l") {
+            state.activePanel = "logs";
+            updateTabButtons();
+            renderDetail();
+          } else if (event.key === "s") {
+            state.activePanel = "spec";
+            updateTabButtons();
+            renderDetail();
+          } else if (event.key === "p") {
+            const anchor = document.getElementById("prLink");
+            if (anchor instanceof HTMLAnchorElement) {
+              anchor.click();
+            }
+          }
+        });
+      }
+
+      async function bootstrap() {
+        registerEvents();
+        updateTabButtons();
+        await loadAuth();
+        await loadRepos();
+        await loadEpicsForSelectedRepo();
+        await refreshAll();
+        connectStream();
+        updateStatusLabel();
+      }
+
+      bootstrap().catch((error) => {
+        console.error(error);
+        setBanner("Failed to load board. Check API availability.", true);
+      });
+    </script>
+  </body>
+</html>

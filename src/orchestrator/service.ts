@@ -78,6 +78,11 @@ export class OrchestratorService {
     const start = Date.now();
     let runId = '';
     const issueNumber = item.envelope.task_ref.id;
+    const [ownerFromEvent, repoFromEvent] = item.envelope.source.repo.split('/');
+    const repoContext =
+      ownerFromEvent && repoFromEvent
+        ? { owner: ownerFromEvent, repo: repoFromEvent }
+        : { owner: this.config.github.targetOwner, repo: this.config.github.targetRepo };
     const baseContext: BoundaryContext = {
       eventId: item.eventId,
       issueNumber,
@@ -96,10 +101,10 @@ export class OrchestratorService {
       // createWorkflowRun already sets currentStage to 'TaskRequested'
 
       const issue = await this.runBoundary('github.get_issue_context', { ...baseContext, runId }, () =>
-        this.github.getIssueContext(issueNumber),
+        this.github.getIssueContext(issueNumber, repoContext),
       );
       const baselineCommit = await this.runBoundary('github.get_branch_sha', { ...baseContext, runId }, () =>
-        this.github.getBranchSha(this.config.github.baseBranch),
+        this.github.getBranchSha(this.config.github.baseBranch, repoContext),
       );
 
       const specRetry = await withRetry(
@@ -265,7 +270,7 @@ export class OrchestratorService {
       );
 
       const prNumber = await this.runBoundary('github.find_open_pr_for_issue', { ...baseContext, runId }, () =>
-        this.github.findOpenPullRequestForIssue(issue.issueNumber),
+        this.github.findOpenPullRequestForIssue(issue.issueNumber, repoContext),
       );
       if (prNumber !== null) {
         await this.runBoundary('repo.set_run_pr_number', { ...baseContext, runId }, () =>
@@ -275,7 +280,7 @@ export class OrchestratorService {
       const checksPassed =
         prNumber !== null &&
         (await this.runBoundary('github.has_required_checks_passed', { ...baseContext, runId }, () =>
-          this.github.hasRequiredChecksPassed(prNumber, this.config.requiredChecks),
+          this.github.hasRequiredChecksPassed(prNumber, this.config.requiredChecks, repoContext),
         ));
 
       const mergeDecision = await this.runBoundary('codex.generate_merge_decision', { ...baseContext, runId }, () =>
@@ -297,12 +302,13 @@ export class OrchestratorService {
             this.github.approvePullRequest(
               prNumber,
               `Automated review approval for run ${runId}.\n\n${safeRationale}`,
+              repoContext,
             ),
           );
 
           if (this.config.autoMergeEnabled && checksPassed) {
             await this.runBoundary('github.enable_auto_merge', { ...baseContext, runId }, () =>
-              this.github.enableAutoMerge(prNumber),
+              this.github.enableAutoMerge(prNumber, repoContext),
             );
           }
         } else if (mergeDecision.decision === 'request_changes' || mergeDecision.decision === 'block') {
@@ -312,6 +318,7 @@ export class OrchestratorService {
               `Automated review requests changes for run ${runId}.\n\n${safeRationale}\n\n${safeFindings
                 .map((f) => `- ${f}`)
                 .join('\n')}`,
+              repoContext,
             ),
           );
         }
@@ -323,6 +330,7 @@ export class OrchestratorService {
               `Orchestrator run ${runId} completed planning/execution but no linked open PR was found.`,
               'Open or link a PR with `Closes #<issue>` for automated review/merge.',
             ].join('\n\n'),
+            repoContext,
           ),
         );
       }

@@ -15,6 +15,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/src/api/static ./dist/src/api/static
 COPY --from=build /app/src/schemas ./src/schemas
 COPY --from=build /app/scripts ./scripts
 EXPOSE 3000

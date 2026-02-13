@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../src/config.js';
 import { CodexAdapter } from '../src/integrations/openai/codex.js';
+import { AutonomyManager } from '../src/lib/autonomy.js';
 import { createLogger } from '../src/lib/logger.js';
 import { metricsRegistry } from '../src/lib/metrics.js';
 import { OrchestratorService, type EnqueuePayload } from '../src/orchestrator/service.js';
@@ -35,6 +36,17 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     requiredChecks: ['CI / Tests', 'CI / Lint + Typecheck'],
     otelEnabled: false,
     dryRun: true,
+    autonomyMode: 'pr_only' as const,
+    corsAllowedOrigins: [],
+    uiUnifiedConsole: true,
+    uiRuntimeApiBase: undefined,
+    runtimeSupervisor: {
+      plannerPrdPath: './docs/deep-research-report.md',
+      plannerMaxIterations: 10,
+      teamMaxIterations: 20,
+      reviewerMaxIterations: 10,
+      maxLogLines: 4000,
+    },
     ...overrides,
   };
 }
@@ -126,11 +138,25 @@ function createHarness(params: { checksPassed: boolean; prNumber: number | null 
     config,
     dbClient: { ready: async () => true },
     workflowRepo: repo as never,
+    github: {
+      getPullRequestChecksSnapshot: async () => ({ prNumber: 0, title: '', url: '', state: 'open' as const, draft: false, mergeable: true, headSha: '', checks: [], requiredCheckNames: [], overallStatus: 'unknown' as const }),
+      listAccessibleRepositories: async () => [],
+      listEpicIssues: async () => [],
+      listRepositoryProjects: async () => [],
+      listProjectTodoIssues: async () => [],
+    },
     orchestrator: {
       enqueue: (item) => {
         queued.push(item);
       },
     },
+    runtimeSupervisor: {
+      listProcesses: () => [],
+      listLogs: () => [],
+      executeAction: async () => ({ accepted: true, process: { process_id: 'planner' as const, display_name: 'Planner', status: 'idle' as const, pid: null, run_count: 0, last_started_at: null, last_stopped_at: null, last_exit_code: null, last_signal: null, command: 'bash', args: [], error: null } }),
+      subscribe: () => () => {},
+    },
+    autonomyManager: new AutonomyManager('pr_only'),
     logger,
   });
 
@@ -185,6 +211,7 @@ describe('orchestrator E2E flow: webhook -> spec -> PR/checks -> merge decision'
     expect(github.hasRequiredChecksPassed).toHaveBeenCalledWith(
       321,
       config.requiredChecks,
+      expect.objectContaining({ owner: 'khenson99', repo: 'ralph-loop-orchestrator' }),
     );
     expect(github.approvePullRequest).toHaveBeenCalledTimes(1);
     expect(github.requestChanges).not.toHaveBeenCalled();
@@ -243,6 +270,7 @@ describe('orchestrator E2E flow: webhook -> spec -> PR/checks -> merge decision'
     expect(github.hasRequiredChecksPassed).toHaveBeenCalledWith(
       654,
       config.requiredChecks,
+      expect.objectContaining({ owner: 'khenson99', repo: 'ralph-loop-orchestrator' }),
     );
     expect(github.approvePullRequest).not.toHaveBeenCalled();
     expect(github.requestChanges).toHaveBeenCalledTimes(1);

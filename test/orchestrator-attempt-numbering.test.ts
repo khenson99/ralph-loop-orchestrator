@@ -155,6 +155,17 @@ describe('OrchestratorService attempt numbering', () => {
       requiredChecks: [],
       otelEnabled: false,
       dryRun: false,
+      autonomyMode: 'pr_only' as const,
+      corsAllowedOrigins: [],
+      uiUnifiedConsole: true,
+      uiRuntimeApiBase: undefined,
+      runtimeSupervisor: {
+        plannerPrdPath: './docs/deep-research-report.md',
+        plannerMaxIterations: 10,
+        teamMaxIterations: 20,
+        reviewerMaxIterations: 10,
+        maxLogLines: 4000,
+      },
     };
 
     const logger = {

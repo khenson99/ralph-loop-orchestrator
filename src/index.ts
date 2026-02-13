@@ -5,9 +5,11 @@ import { buildServer } from './api/server.js';
 import { ClaudeAdapter } from './integrations/anthropic/claude.js';
 import { GitHubClient } from './integrations/github/client.js';
 import { CodexAdapter } from './integrations/openai/codex.js';
+import { AutonomyManager } from './lib/autonomy.js';
 import { createLogger } from './lib/logger.js';
 import { startTelemetry, stopTelemetry } from './lib/telemetry.js';
 import { OrchestratorService } from './orchestrator/service.js';
+import { ProcessSupervisor } from './runtime/process-supervisor.js';
 import { DatabaseClient } from './state/db.js';
 import { WorkflowRepository } from './state/repository.js';
 
@@ -22,8 +24,19 @@ async function main() {
   const github = new GitHubClient(config.github);
   const codex = new CodexAdapter(config.openai, config.dryRun);
   const claude = new ClaudeAdapter(config.anthropic, config.dryRun);
+  const runtimeSupervisor = new ProcessSupervisor({
+    cwd: process.cwd(),
+    plannerPrdPath: config.runtimeSupervisor.plannerPrdPath,
+    plannerMaxIterations: config.runtimeSupervisor.plannerMaxIterations,
+    teamMaxIterations: config.runtimeSupervisor.teamMaxIterations,
+    reviewerMaxIterations: config.runtimeSupervisor.reviewerMaxIterations,
+    maxLogLines: config.runtimeSupervisor.maxLogLines,
+    logger,
+  });
 
   const orchestrator = new OrchestratorService(repo, github, codex, claude, config, logger);
+
+  const autonomyManager = new AutonomyManager(config.autonomyMode);
 
   const server = buildServer({
     config,
@@ -31,11 +44,14 @@ async function main() {
     workflowRepo: repo,
     github,
     orchestrator,
+    runtimeSupervisor,
+    autonomyManager,
     logger,
   });
 
   const close = async () => {
     logger.info('Shutting down server...');
+    await runtimeSupervisor.shutdown();
     await server.close();
     await dbClient.close();
     await stopTelemetry();

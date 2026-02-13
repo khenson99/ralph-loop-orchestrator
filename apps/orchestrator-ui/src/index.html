@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ralph Loop Orchestrator Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app-config.js"></script>
+  </head>
+  <body>
+    <a href="#view-board" class="skip-link">Skip to main content</a>
+    <div id="a11yLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+    <div id="boardLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+    <main class="shell" role="main">
+      <header class="topbar panel" role="banner">
+        <div class="brand">
+          <p class="kicker">Ralph Loop</p>
+          <h1>World-Class Orchestrator Console</h1>
+          <p class="sub">One cockpit for planning, execution, review, and operational control.</p>
+        </div>
+        <div class="status-grid">
+          <span class="status-pill" id="statusApi">api: --</span>
+          <span class="status-pill" id="statusAuth">auth: --</span>
+          <span class="status-pill" id="statusStream">stream: connecting</span>
+          <span class="status-pill" id="statusGenerated">generated: --</span>
+        </div>
+        <div class="header-actions">
+          <button id="openPalette" class="btn-ghost" type="button">Cmd/Ctrl+K</button>
+          <button id="incidentToggle" class="btn-danger" type="button" aria-pressed="false">Incident Mode</button>
+        </div>
+      </header>
+
+      <nav class="topnav panel" aria-label="Console sections">
+        <button class="tab" data-view="board" aria-pressed="true">Board</button>
+        <button class="tab" data-view="detail" aria-pressed="false">Task Detail</button>
+        <button class="tab" data-view="inspect" aria-pressed="false">Inspect</button>
+        <button class="tab" data-view="service" aria-pressed="false">Service</button>
+        <button class="tab" data-view="settings" aria-pressed="false">Settings</button>
+      </nav>
+
+      <section id="statusBanner" class="status-banner" role="status" aria-live="polite"></section>
+
+      <section id="view-board" class="view panel" data-view="board">
+        <div class="panel-head">
+          <h2>Kanban Ops Board</h2>
+          <div class="head-actions">
+            <button id="refreshBoard" class="btn-primary" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="board-toolbar" role="search" aria-label="Board filters">
+          <input id="searchInput" type="search" placeholder="Search tasks, tags, owners" aria-label="Search tasks" />
+          <select id="repoFilter" aria-label="Filter by repository"><option value="">All repos</option></select>
+          <select id="ownerFilter" aria-label="Filter by owner"><option value="">All owners</option></select>
+          <select id="laneFilter" aria-label="Filter by lane"><option value="">All lanes</option></select>
+          <select id="sortBy" aria-label="Sort order">
+            <option value="updated_desc">Sort: Recently Updated</option>
+            <option value="repo_asc">Sort: Repo A-Z</option>
+            <option value="repo_desc">Sort: Repo Z-A</option>
+            <option value="title_asc">Sort: Title A-Z</option>
+          </select>
+          <div id="savedViewsContainer"></div>
+          <button id="clearFilters" class="btn-ghost" type="button">Clear</button>
+        </div>
+        <div class="board-aux">
+          <article class="aux-card">
+            <h3>Needs Human Queue</h3>
+            <div id="needsHumanQueue" class="queue-list"></div>
+          </article>
+          <article class="aux-card incident-shortcuts" id="incidentPanel" hidden>
+            <h3>War Room Actions</h3>
+            <p class="aux-sub">Focused on blocked and failing work.</p>
+            <div class="shortcut-buttons">
+              <button data-incident-action="retry" class="btn-ghost" type="button">Retry Selected</button>
+              <button data-incident-action="escalate" class="btn-ghost" type="button">Escalate Selected</button>
+              <button data-incident-action="block-toggle" class="btn-ghost" type="button">Block/Unblock Selected</button>
+            </div>
+          </article>
+        </div>
+        <div class="board-wrap" id="boardRegion" tabindex="-1" role="region" aria-label="Kanban board lanes">
+          <div id="lanes" class="lanes" role="list"></div>
+        </div>
+      </section>
+
+      <section id="view-detail" class="view panel" data-view="detail" hidden>
+        <div class="panel-head">
+          <h2>Task Detail</h2>
+          <div class="head-actions">
+            <button id="openInBoard" class="btn-ghost" type="button">Show On Board</button>
+          </div>
+        </div>
+        <div class="detail-main" id="cardRegion" tabindex="-1" role="region" aria-label="Task detail">
+          <h3 id="detailTitle">Select a card</h3>
+          <div id="detailMeta" class="pill-row"></div>
+          <div id="detailLinks" class="pill-row"></div>
+          <div id="agentControlRegion"></div>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Detail panels">
+          <button class="detail-tab" data-panel="timeline" aria-pressed="true" type="button">Timeline</button>
+          <button class="detail-tab" data-panel="spec" aria-pressed="false" type="button">Spec</button>
+          <button class="detail-tab" data-panel="logs" aria-pressed="false" type="button">Logs</button>
+          <button class="detail-tab" data-panel="pr" aria-pressed="false" type="button">PR / CI</button>
+        </div>
+        <div id="detailBody" class="detail-body"></div>
+      </section>
+
+      <section id="view-inspect" class="view panel" data-view="inspect" hidden>
+        <div class="panel-head">
+          <h2>Run & Task Inspectors</h2>
+        </div>
+        <div class="inspect-grid">
+          <article class="inspect-card">
+            <h3>Inspect Run</h3>
+            <div class="row">
+              <select id="runId"><option value="">Select run ID</option></select>
+              <button id="fetchRun" class="btn-primary" type="button">Fetch</button>
+            </div>
+            <div class="row row-secondary">
+              <input id="newRunId" type="text" placeholder="Add run ID" />
+              <button id="addRunId" class="btn-ghost" type="button">Add</button>
+            </div>
+            <div class="row row-secondary">
+              <button id="refreshRecentRuns" class="btn-ghost" type="button">Load Recent Runs</button>
+            </div>
+            <pre id="runResult" class="mono">No run loaded.</pre>
+          </article>
+          <article class="inspect-card">
+            <h3>Inspect Task</h3>
+            <div class="row">
+              <select id="taskId"><option value="">Select task ID</option></select>
+              <button id="fetchTask" class="btn-primary" type="button">Fetch</button>
+            </div>
+            <div class="row row-secondary">
+              <input id="newTaskId" type="text" placeholder="Add task ID" />
+              <button id="addTaskId" class="btn-ghost" type="button">Add</button>
+            </div>
+            <div class="row row-secondary">
+              <button id="refreshRecentTasks" class="btn-ghost" type="button">Load Recent Tasks</button>
+            </div>
+            <pre id="taskResult" class="mono">No task loaded.</pre>
+          </article>
+        </div>
+      </section>
+
+      <section id="view-service" class="view panel" data-view="service" hidden>
+        <div class="panel-head">
+          <h2>Service + Intake</h2>
+          <div class="head-actions">
+            <button id="refreshService" class="btn-primary" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="service-grid">
+          <article>
+            <h3>/healthz</h3>
+            <pre id="healthResult" class="mono">Loading...</pre>
+          </article>
+          <article>
+            <h3>/readyz</h3>
+            <pre id="readyResult" class="mono">Loading...</pre>
+          </article>
+          <article class="settings-card">
+            <h3>Repo Project To-Dos</h3>
+            <p class="aux-sub">Select a repo, load its GitHub Project, pull Todo items, and dispatch to Ralph.</p>
+            <label for="intakeRepoSelect">Repository</label>
+            <select id="intakeRepoSelect"><option value="">Select repository</option></select>
+            <div class="row row-secondary">
+              <button id="loadProjects" class="btn-ghost" type="button">Load Projects</button>
+            </div>
+            <label for="intakeProjectSelect">Project</label>
+            <select id="intakeProjectSelect"><option value="">Select project</option></select>
+            <div class="row row-secondary">
+              <button id="loadProjectTodos" class="btn-ghost" type="button">Load To-Dos</button>
+            </div>
+            <label for="intakeTodoSelect">Project To-Dos</label>
+            <select id="intakeTodoSelect" multiple size="6"></select>
+            <div class="row row-secondary">
+              <button id="dispatchProjectTodos" class="btn-primary" type="button">Start Selected Tasks</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view panel" data-view="settings" hidden>
+        <div class="panel-head">
+          <h2>Runtime Settings</h2>
+        </div>
+        <div class="settings-grid">
+          <article class="settings-card">
+            <h3>API Endpoint</h3>
+            <p class="aux-sub">Resolution order: query param → localStorage → runtime config → same-origin.</p>
+            <label for="apiBaseInput">API Base</label>
+            <div class="row">
+              <input id="apiBaseInput" type="text" placeholder="https://orchestrator.example.com" />
+              <button id="testApiBase" class="btn-ghost" type="button">Test</button>
+            </div>
+            <div class="row row-secondary">
+              <button id="saveApiBase" class="btn-primary" type="button">Save API Base</button>
+              <button id="resetApiBase" class="btn-ghost" type="button">Reset</button>
+            </div>
+            <p id="apiBaseResolved" class="aux-sub mono-inline">resolved: --</p>
+          </article>
+          <article class="settings-card">
+            <h3>Operator Identity</h3>
+            <label for="identityUser">User</label>
+            <input id="identityUser" type="text" placeholder="alice" />
+            <label for="identityRole">Role</label>
+            <select id="identityRole">
+              <option value="viewer">viewer</option>
+              <option value="operator">operator</option>
+              <option value="reviewer">reviewer</option>
+              <option value="admin">admin</option>
+            </select>
+            <div class="row row-secondary">
+              <button id="applyIdentity" class="btn-primary" type="button">Apply Identity</button>
+              <button id="clearIdentity" class="btn-ghost" type="button">Clear</button>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <section id="palette" class="palette" hidden>
+      <div class="palette-dialog" role="dialog" aria-modal="true" aria-label="Command palette">
+        <input id="paletteInput" type="text" placeholder="Jump to view, task, or action" />
+        <ul id="paletteList" class="palette-list"></ul>
+      </div>
+    </section>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

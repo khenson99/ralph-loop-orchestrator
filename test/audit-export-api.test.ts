@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildServer } from '../src/api/server.js';
+import { AutonomyManager } from '../src/lib/autonomy.js';
 import { createLogger } from '../src/lib/logger.js';
 
 const config = {
@@ -23,6 +24,17 @@ const config = {
   requiredChecks: [],
   otelEnabled: false,
   dryRun: true,
+  autonomyMode: 'pr_only' as const,
+  corsAllowedOrigins: [],
+  uiUnifiedConsole: true,
+  uiRuntimeApiBase: undefined,
+  runtimeSupervisor: {
+    plannerPrdPath: './docs/deep-research-report.md',
+    plannerMaxIterations: 10,
+    teamMaxIterations: 20,
+    reviewerMaxIterations: 10,
+    maxLogLines: 4000,
+  },
 };
 
 describe('audit export API', () => {
@@ -54,7 +66,13 @@ describe('audit export API', () => {
           ],
         }),
         getTaskView: async () => null,
+        getTaskDetail: async () => null,
         recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
+        listBoardCards: async () => [],
+        listRecentRuns: async () => [],
+        listRecentTasks: async () => [],
+        listTaskTimeline: async () => [],
+        applyTaskAction: async () => null,
         getLatestArtifactByKind: async () => ({
           id: 'a2',
           kind: 'formal_spec',
@@ -83,6 +101,11 @@ describe('audit export API', () => {
         ],
       },
       github: {
+        getPullRequestChecksSnapshot: async () => ({ prNumber: 0, title: '', url: '', state: 'open' as const, draft: false, mergeable: true, headSha: '', checks: [], requiredCheckNames: [], overallStatus: 'unknown' as const }),
+        listAccessibleRepositories: async () => [],
+        listEpicIssues: async () => [],
+        listRepositoryProjects: async () => [],
+        listProjectTodoIssues: async () => [],
         getPullRequestChecks: async () => ({
           prNumber: 52,
           headSha: 'abc123',
@@ -90,6 +113,13 @@ describe('audit export API', () => {
         }),
       },
       orchestrator: { enqueue: () => {} },
+      runtimeSupervisor: {
+        listProcesses: () => [],
+        listLogs: () => [],
+        executeAction: async () => ({ accepted: true, process: { process_id: 'planner' as const, display_name: 'Planner', status: 'idle' as const, pid: null, run_count: 0, last_started_at: null, last_stopped_at: null, last_exit_code: null, last_signal: null, command: 'bash', args: [], error: null } }),
+        subscribe: () => () => {},
+      },
+      autonomyManager: new AutonomyManager('pr_only'),
       logger: createLogger('silent'),
     });
 

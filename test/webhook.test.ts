@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type AppServices, buildServer } from '../src/api/server.js';
+import { AutonomyManager } from '../src/lib/autonomy.js';
 import { createLogger } from '../src/lib/logger.js';
 
 const config = {
@@ -25,6 +26,17 @@ const config = {
   requiredChecks: [],
   otelEnabled: false,
   dryRun: true,
+  autonomyMode: 'pr_only' as const,
+  corsAllowedOrigins: [],
+  uiUnifiedConsole: true,
+  uiRuntimeApiBase: undefined,
+  runtimeSupervisor: {
+    plannerPrdPath: './docs/deep-research-report.md',
+    plannerMaxIterations: 10,
+    teamMaxIterations: 20,
+    reviewerMaxIterations: 10,
+    maxLogLines: 4000,
+  },
 };
 
 function makePayload(overrides: Record<string, unknown> = {}) {
@@ -36,6 +48,63 @@ function makePayload(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
+
+function createWorkflowRepoStub(overrides: Partial<Parameters<typeof buildServer>[0]['workflowRepo']> = {}) {
+  return {
+    getRunView: async () => null,
+    listRecentRuns: async () => [],
+    getTaskView: async () => null,
+    listRecentTasks: async () => [],
+    getTaskDetail: async () => null,
+    listTaskTimeline: async () => [],
+    listBoardCards: async () => [],
+    applyTaskAction: async () => null,
+    recordEventIfNew: async () => ({ inserted: true, eventId: 'evt-1' }),
+    ...overrides,
+  };
+}
+
+const githubStub: Parameters<typeof buildServer>[0]['github'] = {
+  getPullRequestChecksSnapshot: async (prNumber) => ({
+    prNumber,
+    title: `PR #${prNumber}`,
+    url: `https://github.com/khenson99/ralph-loop-orchestrator/pull/${prNumber}`,
+    state: 'open',
+    draft: false,
+    mergeable: true,
+    headSha: 'abc123',
+    checks: [],
+    requiredCheckNames: [],
+    overallStatus: 'unknown',
+  }),
+  listAccessibleRepositories: async () => [],
+  listEpicIssues: async () => [],
+  listRepositoryProjects: async () => [],
+  listProjectTodoIssues: async () => [],
+};
+
+const runtimeSupervisorStub: Parameters<typeof buildServer>[0]['runtimeSupervisor'] = {
+  listProcesses: () => [],
+  listLogs: () => [],
+  executeAction: async ({ processId }) => ({
+    accepted: true,
+    process: {
+      process_id: processId,
+      display_name: processId[0]?.toUpperCase() + processId.slice(1),
+      status: 'idle',
+      pid: null,
+      run_count: 0,
+      last_started_at: null,
+      last_stopped_at: null,
+      last_exit_code: null,
+      last_signal: null,
+      command: 'bash',
+      args: [],
+      error: null,
+    },
+  }),
+  subscribe: () => () => {},
+};
 
 function sign(payload: string, secret: string = config.github.webhookSecret): string {
   return 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');
@@ -50,12 +119,13 @@ function buildTestServer(overrides: {
     app: buildServer({
       config,
       dbClient: { ready: async () => true },
-      workflowRepo: {
-        getRunView: async () => null,
-        getTaskView: async () => null,
+      workflowRepo: createWorkflowRepoStub({
         recordEventIfNew: overrides.recordEventIfNew ?? (async () => ({ inserted: true, eventId: 'evt-1' })),
-      },
+      }),
+      github: githubStub,
       orchestrator: { enqueue: enqueue as AppServices['orchestrator']['enqueue'] },
+      runtimeSupervisor: runtimeSupervisorStub,
+      autonomyManager: new AutonomyManager('pr_only'),
       logger: createLogger('silent'),
     }),
     enqueue,

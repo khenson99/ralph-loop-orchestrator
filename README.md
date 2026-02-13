@@ -11,8 +11,31 @@ Standalone orchestration service for a Ralph Team Loop workflow:
   - `GET /healthz`
   - `GET /readyz`
   - `GET /metrics`
+  - `GET /api/v1/runs/recent`
+  - `GET /api/v1/tasks/recent`
   - `GET /api/runs/:runId`
   - `GET /api/tasks/:taskId`
+  - `GET /api/v1/boards/default`
+  - `GET /api/v1/auth/me`
+  - `GET /api/v1/tasks/:taskId/detail`
+  - `GET /api/v1/tasks/:taskId/timeline`
+  - `POST /api/v1/tasks/:taskId/actions/:action`
+  - `GET /api/v1/runtime/processes`
+  - `GET /api/v1/runtime/processes/:processId/logs`
+  - `POST /api/v1/runtime/processes/:processId/actions/:action`
+  - `GET /api/v1/github/projects?owner=...&repo=...`
+  - `GET /api/v1/github/project-todos?owner=...&repo=...&project_number=...`
+  - `POST /api/v1/project-todos/dispatch`
+  - `GET /api/v1/stream?topics=board,task_<id>,runtime` (SSE)
+- Unified ops console frontend served from the orchestrator:
+  - `GET /app`
+  - `GET /app/app-config.js` runtime-injects `window.__RALPH_CONFIG__.apiBase`
+  - Board/detail views use live GitHub PR check-run status when PR links exist
+- Shared frontend source of truth:
+  - `apps/orchestrator-ui/src`
+  - `npm run ui:sync` mirrors to `src/api/static/unified` and `apps/vercel-console`
+- Static web console target for Vercel hosting:
+  - `apps/vercel-console`
 - PostgreSQL persistence with Drizzle tables:
   - `workflow_runs`, `events`, `tasks`, `agent_attempts`, `artifacts`, `merge_decisions`
 - Codex adapter (Responses API) for:
@@ -31,6 +54,7 @@ Standalone orchestration service for a Ralph Team Loop workflow:
 
 1. Copy `.env.example` to `.env` and fill all secrets.
    - For local smoke tests without model keys, set `DRY_RUN=true` and provide `GITHUB_TOKEN`.
+   - Set `CORS_ALLOWED_ORIGINS` if a browser app (for example Vercel) calls this API.
 2. Install dependencies:
    - `npm install`
 3. Push schema:
@@ -39,6 +63,32 @@ Standalone orchestration service for a Ralph Team Loop workflow:
    - `npm run ralph:init -- --repo-type monorepo --project-url "https://github.com/users/<you>/projects/<id>"`
 5. Start service:
    - `npm run dev`
+6. Open the UI:
+   - `http://localhost:3000/app`
+7. To execute task actions from the UI, set an identity:
+   - open `Settings` tab
+   - choose user + role in `Operator Identity`
+   - action routes require `x-ralph-user` and enforce role permissions
+8. To route the UI to another API host:
+   - open `Settings > API Endpoint`
+   - set/test/save API base
+   - resolution order is `?apiBase=...` -> localStorage -> `window.__RALPH_CONFIG__.apiBase` -> same-origin
+9. To start planner/team/reviewer from the UI:
+   - set `RALPH_PLANNER_PRD_PATH` (or enter `prd_path` when starting planner)
+   - use the Loop Supervisor panel for start/stop/restart and log tailing
+
+## Unified UI sync
+
+Run this before commits/deployments when the frontend changes:
+
+```bash
+npm run ui:sync
+```
+
+This keeps these targets in parity:
+- `apps/orchestrator-ui/src` (authoritative source)
+- `src/api/static/unified` (`/app` assets)
+- `apps/vercel-console` (Vercel-hosted console)
 
 ## Configure GitHub repo policies
 
