@@ -64,8 +64,21 @@ export const agentAttempts = pgTable('agent_attempts', {
   status: varchar('status', { length: 64 }).notNull(),
   output: jsonb('output').$type<Record<string, unknown> | null>(),
   error: text('error'),
+  errorCategory: varchar('error_category', { length: 64 }),
+  backoffDelayMs: integer('backoff_delay_ms'),
   durationMs: integer('duration_ms'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const workflowStageTransitions = pgTable('workflow_stage_transitions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  workflowRunId: uuid('workflow_run_id')
+    .notNull()
+    .references(() => workflowRuns.id),
+  fromStage: varchar('from_stage', { length: 128 }).notNull(),
+  toStage: varchar('to_stage', { length: 128 }).notNull(),
+  transitionedAt: timestamp('transitioned_at', { withTimezone: true }).notNull().defaultNow(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
 });
 
 export const artifacts = pgTable('artifacts', {
@@ -97,6 +110,7 @@ export const workflowRunRelations = relations(workflowRuns, ({ many }) => ({
   tasks: many(tasks),
   artifacts: many(artifacts),
   mergeDecisions: many(mergeDecisions),
+  stageTransitions: many(workflowStageTransitions),
 }));
 
 export const taskRelations = relations(tasks, ({ many, one }) => ({
@@ -130,5 +144,12 @@ export const artifactRelations = relations(artifacts, ({ one }) => ({
   task: one(tasks, {
     fields: [artifacts.taskId],
     references: [tasks.id],
+  }),
+}));
+
+export const workflowStageTransitionRelations = relations(workflowStageTransitions, ({ one }) => ({
+  workflowRun: one(workflowRuns, {
+    fields: [workflowStageTransitions.workflowRunId],
+    references: [workflowRuns.id],
   }),
 }));

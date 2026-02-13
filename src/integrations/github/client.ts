@@ -170,6 +170,73 @@ export class GitHubClient {
     const repo = this.resolveRepo(ref);
     const pr = await this.getPullRequest(prNumber, repo);
 
+    const refs = [...new Set([pr.head.sha, pr.merge_commit_sha].filter((ref): ref is string => Boolean(ref)))];
+
+    const snapshots = await Promise.all(refs.map((ref) => this.getCheckSnapshotForRef(ref)));
+
+    if (requiredChecks.length === 0) {
+      return snapshots.some((snapshot) => {
+        const checksPassed = snapshot.checkRuns.every(
+          (run) => run.status === 'completed' && run.conclusion === 'success',
+        );
+        const statusesPassed = snapshot.statuses.every((status) => status.state === 'success');
+        return checksPassed && statusesPassed;
+      });
+    }
+
+    return requiredChecks.every((required) =>
+      snapshots.some((snapshot) => {
+        const run = snapshot.checkRuns.find((item) => item.name === required);
+        const context = snapshot.statuses.find((item) => item.context === required);
+        const checkRunPassed = run?.status === 'completed' && run.conclusion === 'success';
+        const statusPassed = context?.state === 'success';
+        return checkRunPassed || statusPassed;
+      }),
+    );
+  }
+
+  private async getCheckSnapshotForRef(ref: string): Promise<{
+    checkRuns: Array<{ name: string; status: string | null; conclusion: string | null }>;
+    statuses: Array<{ context: string; state: string }>;
+  }> {
+    const [checks, combinedStatus] = await Promise.all([
+      this.octokit.rest.checks.listForRef({
+        owner: this.config.targetOwner,
+        repo: this.config.targetRepo,
+        ref,
+        per_page: 100,
+      }),
+      this.octokit.rest.repos.getCombinedStatusForRef({
+        owner: this.config.targetOwner,
+        repo: this.config.targetRepo,
+        ref,
+      }),
+    ]);
+
+    return {
+      checkRuns: checks.data.check_runs.map((run) => ({
+        name: run.name,
+        status: run.status,
+        conclusion: run.conclusion,
+      })),
+      statuses: combinedStatus.data.statuses.map((status) => ({
+        context: status.context,
+        state: status.state,
+      })),
+    };
+  }
+
+  async getPullRequestChecks(prNumber: number, ref?: RepoRef): Promise<{
+    prNumber: number;
+    headSha: string;
+    checks: Array<{
+      name: string;
+      status: string | null;
+      conclusion: string | null;
+    }>;
+  }> {
+    const repo = this.resolveRepo(ref);
+    const pr = await this.getPullRequest(prNumber, repo);
     const checks = await this.octokit.rest.checks.listForRef({
       owner: repo.owner,
       repo: repo.repo,
@@ -177,18 +244,15 @@ export class GitHubClient {
       per_page: 100,
     });
 
-    const map = new Map(checks.data.check_runs.map((run) => [run.name, run]));
-
-    if (requiredChecks.length === 0) {
-      return checks.data.check_runs.every(
-        (run) => run.status === 'completed' && run.conclusion === 'success',
-      );
-    }
-
-    return requiredChecks.every((required) => {
-      const run = map.get(required);
-      return run?.status === 'completed' && run.conclusion === 'success';
-    });
+    return {
+      prNumber,
+      headSha: pr.head.sha,
+      checks: checks.data.check_runs.map((run) => ({
+        name: run.name,
+        status: run.status,
+        conclusion: run.conclusion,
+      })),
+    };
   }
 
   async getPullRequestChecksSnapshot(

@@ -500,22 +500,13 @@ describe('frontend API routes', () => {
       workflowRepo: createWorkflowRepoStub({
         listBoardCards: async () => [
           {
-            id: 'task-1',
-            workflowRunId: 'run-1',
-            taskKey: 'MVP-1',
-            title: 'Build board page',
-            ownerRole: 'frontend',
-            status: 'running',
-            attemptCount: 2,
-            createdAt: new Date('2026-02-11T20:00:00Z'),
-            updatedAt: new Date('2026-02-11T21:00:00Z'),
+            runId: 'run-1',
             issueNumber: 123,
             prNumber: 44,
-            currentStage: 'InReview',
-            sourceOwner: 'khenson99',
-            sourceRepo: 'ralph-loop-orchestrator',
-            latestAttempt: { id: 'attempt-1', status: 'running' },
-            latestMergeDecision: null,
+            status: 'in_progress',
+            currentStage: 'SubtasksDispatched',
+            updatedAt: new Date('2026-02-11T21:00:00Z').toISOString(),
+            taskCounts: { queued: 0, running: 1, retry: 0, completed: 1, failed: 0 },
           },
         ],
       }),
@@ -537,12 +528,12 @@ describe('frontend API routes', () => {
       cards: Record<string, { lane: string; owner: { display_name: string }; signals: { ci_status: string } }>;
     };
     expect(body.board_id).toBe('default');
-    expect(body.cards['task-1']).toBeDefined();
-    const card = body.cards['task-1'];
+    expect(body.cards['run-1']).toBeDefined();
+    const card = body.cards['run-1'];
     expect(card).toBeDefined();
-    expect(card?.lane).toBe('in_progress');
-    expect(card?.owner.display_name).toBe('Frontend');
-    expect(card?.signals.ci_status).toBe('passing');
+    expect(card?.lane).toBe('execute');
+    expect(card?.owner.display_name).toBe('Orchestrator');
+    expect(card?.signals.ci_status).toBe('unknown');
 
     await app.close();
   });

@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import OpenAI from 'openai';
 import yaml from 'js-yaml';
 
@@ -9,17 +13,26 @@ import {
   type MergeDecisionV1,
 } from '../../schemas/contracts.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function loadPromptTemplate(name: string): string {
+  const templatePath = resolve(__dirname, '../../prompts', `${name}.md`);
+  return readFileSync(templatePath, 'utf-8');
+}
+
 export class CodexAdapter {
   private readonly client: OpenAI;
   private readonly model: string;
   private readonly dryRun: boolean;
   private readonly hasApiKey: boolean;
+  private readonly formalSpecPrompt: string;
 
   constructor(config: AppConfig['openai'], dryRun = false) {
     this.client = new OpenAI({ apiKey: config.apiKey ?? 'dry-run-key' });
     this.model = config.model;
     this.dryRun = dryRun;
     this.hasApiKey = Boolean(config.apiKey);
+    this.formalSpecPrompt = loadPromptTemplate('formal-spec-v1');
   }
 
   async generateFormalSpec(params: {
@@ -87,8 +100,7 @@ baseline_commit: ${params.baselineCommit}
 
     const response = await this.client.responses.create({
       model: this.model,
-      instructions:
-        'You are a strict software planning assistant. Emit valid YAML that conforms to FormalSpecV1. Include at least 1 work item.',
+      instructions: this.formalSpecPrompt,
       input: prompt,
       reasoning: { effort: 'high' },
     });
@@ -141,15 +153,20 @@ baseline_commit: ${params.baselineCommit}
     reviewSummary: string;
     requiredChecksPassed: boolean;
   }): Promise<MergeDecisionV1> {
+    if (!params.requiredChecksPassed) {
+      return MergeDecisionV1Schema.parse({
+        decision: 'request_changes',
+        rationale:
+          'Required checks gate failed: merge approval is blocked until all required checks pass.',
+        blocking_findings: ['One or more required checks are pending or failing.'],
+      });
+    }
+
     if (this.dryRun || !this.hasApiKey) {
       return MergeDecisionV1Schema.parse({
-        decision: params.requiredChecksPassed ? 'approve' : 'request_changes',
-        rationale: params.requiredChecksPassed
-          ? 'Required checks passed in dry-run mode.'
-          : 'Required checks have not passed yet.',
-        blocking_findings: params.requiredChecksPassed
-          ? []
-          : ['One or more required checks are pending or failing.'],
+        decision: 'approve',
+        rationale: 'Required checks passed in dry-run mode.',
+        blocking_findings: [],
       });
     }
 
