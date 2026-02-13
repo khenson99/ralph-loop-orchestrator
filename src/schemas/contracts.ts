@@ -464,3 +464,71 @@ export type RuntimeProcessListResponse = z.infer<typeof RuntimeProcessListRespon
 export type RuntimeLogEntry = z.infer<typeof RuntimeLogEntrySchema>;
 export type RuntimeLogsResponse = z.infer<typeof RuntimeLogsResponseSchema>;
 export type RuntimeActionResponse = z.infer<typeof RuntimeActionResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// SLO & Incident schemas – re-exported from their source modules
+// ---------------------------------------------------------------------------
+
+export {
+  SloIdSchema,
+  SloDefinitionSchema,
+  SloComplianceSchema,
+  SloEvaluationResultSchema,
+  FiredAlertSchema,
+  SloStatusResponseSchema,
+  AlertSeveritySchema,
+  AlertRuleSchema,
+} from '../lib/slo.js';
+
+export type {
+  SloId,
+  SloDefinition,
+  SloCompliance,
+  SloEvaluationResult,
+  FiredAlert,
+  SloStatusResponse,
+  AlertSeverity,
+  AlertRule,
+} from '../lib/slo.js';
+
+export {
+  IncidentSeveritySchema,
+  SeverityDefinitionSchema,
+  IncidentStateSchema,
+  IncidentRecordSchema,
+} from '../lib/incident.js';
+
+export type {
+  IncidentSeverity,
+  SeverityDefinition,
+  IncidentState,
+  IncidentRecord,
+} from '../lib/incident.js';
+
+// ---------------------------------------------------------------------------
+// Security schemas – re-exported from their source module
+// ---------------------------------------------------------------------------
+
+export {
+  InjectionPatternIdSchema,
+  InjectionCategorySchema,
+  SanitisationResultSchema,
+  SecretCategorySchema,
+  RedactionResultSchema,
+  FailureCategorySchema,
+  RetriabilitySchema,
+  FailureClassificationSchema,
+  SecurityValidationReportSchema,
+} from '../lib/security.js';
+
+export type {
+  InjectionPatternId,
+  InjectionCategory,
+  SanitisationResult,
+  SecretCategory,
+  RedactionResult,
+  FailureCategory,
+  Retriability,
+  FailureClassification,
+  SecurityValidationReport,
+} from '../lib/security.js';

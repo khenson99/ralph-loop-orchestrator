@@ -1,8 +1,20 @@
 import { createApiClient } from './api.js';
 import { authHeaders, canPerformAction, clearIdentity, loadIdentity, saveIdentity, summarizeAuth } from './auth.js';
 import { createCommandPalette } from './components/command-palette.js';
+import { createErrorToast } from './components/error-toast.js';
+import { createHealthIndicator } from './components/health-indicator.js';
+import { createSavedViewsPanel } from './components/saved-views.js';
 import { clearApiBase, getIncidentMode, resolveApiBase, saveApiBase, setIncidentMode } from './config.js';
-import { formatDate } from './lib/format.js';
+import { escapeHtml, formatDate } from './lib/format.js';
+import {
+  getDefaultFilters,
+  hasUrlFilterParams,
+  loadSavedViews,
+  pushFilterState,
+  readFilterState,
+} from './lib/filter-persistence.js';
+import { createKeyboardManager } from './lib/keyboard-manager.js';
+import { createTelemetryClient } from './lib/telemetry-client.js';
 import {
   addRunId,
   addTaskId,
@@ -16,8 +28,6 @@ import { getLaneOrder, renderBoard } from './views/board.js';
 import { renderDetail } from './views/detail.js';
 import { refreshServiceStatus } from './views/service.js';
 import { connectBoardStream } from './stream.js';
-
-const SAVED_VIEWS_KEY = 'ralph.ui.savedViews';
 
 const ACTIONS_FOR_BUTTON = {
   retry: ['retry'],
@@ -44,8 +54,7 @@ const dom = {
   ownerFilter: document.getElementById('ownerFilter'),
   laneFilter: document.getElementById('laneFilter'),
   sortBy: document.getElementById('sortBy'),
-  savedViews: document.getElementById('savedViews'),
-  saveCurrentView: document.getElementById('saveCurrentView'),
+  savedViewsContainer: document.getElementById('savedViewsContainer'),
   clearFilters: document.getElementById('clearFilters'),
   refreshBoard: document.getElementById('refreshBoard'),
   lanes: document.getElementById('lanes'),
@@ -58,6 +67,7 @@ const dom = {
   detailBody: document.getElementById('detailBody'),
   detailTabs: [...document.querySelectorAll('.detail-tab')],
   detailActions: [...document.querySelectorAll('[data-action]')],
+  agentControlRegion: document.getElementById('agentControlRegion'),
   openInBoard: document.getElementById('openInBoard'),
   cardRegion: document.getElementById('cardRegion'),
 
@@ -110,13 +120,7 @@ const state = {
   detailPanel: 'timeline',
   me: null,
   identity: loadIdentity(),
-  filters: {
-    search: '',
-    repo: '',
-    owner: '',
-    lane: '',
-    sort: 'updated_desc',
-  },
+  filters: hasUrlFilterParams() ? readFilterState() : getDefaultFilters(),
   intake: {
     repos: [],
     selectedRepo: '',
@@ -132,7 +136,6 @@ const state = {
     selectedRunId: '',
     selectedTaskId: '',
   },
-  savedViews: loadSavedViews(),
 };
 
 const apiClient = createApiClient({
@@ -140,38 +143,14 @@ const apiClient = createApiClient({
   getAuthHeaders: () => authHeaders(state.identity),
 });
 
-function loadSavedViews() {
-  const raw = window.localStorage.getItem(SAVED_VIEWS_KEY);
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .filter((item) => item && typeof item.name === 'string' && item.filters)
-      .slice(0, 50)
-      .map((item, index) => ({
-        id: String(item.id ?? `view-${index}`),
-        name: String(item.name),
-        filters: {
-          search: String(item.filters.search ?? ''),
-          repo: String(item.filters.repo ?? ''),
-          owner: String(item.filters.owner ?? ''),
-          lane: String(item.filters.lane ?? ''),
-          sort: String(item.filters.sort ?? 'updated_desc'),
-        },
-      }));
-  } catch {
-    return [];
-  }
-}
+const telemetry = createTelemetryClient();
+const toast = createErrorToast();
 
-function persistSavedViews() {
-  window.localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(state.savedViews));
-}
+/** @type {{ update: () => void, destroy: () => void } | null} */
+let healthIndicator = null;
+
+/** @type {number|null} */
+let healthUpdateTimer = null;
 
 function setBanner(message, visible = true) {
   dom.statusBanner.textContent = message;
@@ -216,15 +195,6 @@ function updateActionButtons() {
     button.hidden = !allowed;
     button.disabled = !allowed;
   });
-}
-
-function updateSavedViewsSelect() {
-  const options = ['<option value="">Saved views</option>']
-    .concat(
-      state.savedViews.map((item) => `<option value="${item.id}">${item.name}</option>`),
-    )
-    .join('');
-  dom.savedViews.innerHTML = options;
 }
 
 function renderRepoIntakeControls() {
@@ -330,6 +300,8 @@ async function safeRefreshAll() {
 }
 
 function renderBoardView() {
+  const renderStart = performance.now();
+
   if (dom.searchInput.value !== state.filters.search) {
     dom.searchInput.value = state.filters.search;
   }
@@ -340,13 +312,28 @@ function renderBoardView() {
     },
   });
 
-  updateSavedViewsSelect();
+  savedViewsPanel.render();
+
+  telemetry.recordRender(performance.now() - renderStart);
+  if (healthIndicator) {
+    healthIndicator.update();
+  }
+
+  // Announce board card count to screen readers
+  const cardCount = state.board ? Object.keys(state.board.cards).length : 0;
+  const liveRegion = document.getElementById('boardLiveRegion');
+  if (liveRegion) {
+    liveRegion.textContent = `Board updated: ${cardCount} task${cardCount !== 1 ? 's' : ''} loaded.`;
+  }
 }
 
 function renderDetailView() {
   renderDetail(dom, state, {
     onDetailAction: (action) => {
       void performAction(action);
+    },
+    onAgentAction: (actionKey, payload) => {
+      return performAgentAction(actionKey, payload);
     },
   });
 
@@ -393,12 +380,15 @@ function connectStream() {
       state.streamStatus = status;
       updateHeaderStatus();
       if (status === 'live') {
+        telemetry.setSseState('connected');
         stopPollingFallback();
       } else {
+        telemetry.setSseState(status === 'polling' ? 'reconnecting' : 'disconnected');
         startPollingFallback();
       }
     },
     onPatch() {
+      telemetry.recordSseMessage();
       void safeRefreshAll();
     },
   });
@@ -440,14 +430,55 @@ async function performAction(action) {
     payload = { reason };
   }
 
+  const timerId = telemetry.startLatency(resolvedAction);
   try {
     await apiClient.post(`/api/v1/tasks/${encodeURIComponent(state.selectedCardId)}/actions/${resolvedAction}`, payload);
+    telemetry.endLatency(timerId, resolvedAction);
     clearBanner();
     await safeRefreshAll();
   } catch (error) {
+    telemetry.endLatency(timerId, resolvedAction);
     const message = error instanceof Error ? error.message : String(error);
+    telemetry.recordError('performAction', message);
+    toast.show(`Action failed: ${escapeHtml(resolvedAction)} — ${message}`);
     setBanner(`Action failed: ${message}`);
   }
+}
+
+/**
+ * Perform an agent-control action. This is called by the agent-control
+ * component after the user has confirmed (for dangerous actions) and
+ * provided a reason (for block/escalate). Returns a promise so the
+ * component can display status feedback.
+ */
+async function performAgentAction(actionKey, payload) {
+  if (!state.selectedCardId) {
+    throw new Error('Select a task first.');
+  }
+
+  const resolvedAction =
+    actionKey === 'block-toggle' ? (state.detail?.task?.status === 'blocked' ? 'unblock' : 'block') : actionKey;
+
+  if (!canPerformAction(state.me, resolvedAction)) {
+    throw new Error(`Not authorized for action: ${resolvedAction}`);
+  }
+
+  let body = payload ?? {};
+
+  if (resolvedAction === 'reassign') {
+    const newOwner = window.prompt('New owner role:', state.detail?.task?.owner_role ?? 'frontend');
+    if (!newOwner) {
+      throw new Error('Reassign cancelled.');
+    }
+    body = { ...body, new_owner_role: newOwner, reason: body.reason || 'Handing off to specialist' };
+  }
+
+  await apiClient.post(
+    `/api/v1/tasks/${encodeURIComponent(state.selectedCardId)}/actions/${resolvedAction}`,
+    body,
+  );
+  clearBanner();
+  await safeRefreshAll();
 }
 
 async function refreshServicePanel() {
@@ -550,33 +581,6 @@ async function dispatchSelectedProjectTodos() {
   await safeRefreshAll();
 }
 
-function applySavedView(viewId) {
-  const target = state.savedViews.find((item) => item.id === viewId);
-  if (!target) {
-    return;
-  }
-  state.filters = {
-    search: target.filters.search ?? '',
-    repo: target.filters.repo ?? '',
-    owner: target.filters.owner ?? '',
-    lane: target.filters.lane ?? '',
-    sort: target.filters.sort ?? 'updated_desc',
-  };
-  dom.searchInput.value = state.filters.search;
-  renderBoardView();
-}
-
-function saveCurrentView() {
-  const name = window.prompt('Name this view:');
-  if (!name) {
-    return;
-  }
-  const id = `view-${Date.now()}`;
-  state.savedViews = [{ id, name, filters: { ...state.filters } }, ...state.savedViews].slice(0, 50);
-  persistSavedViews();
-  updateSavedViewsSelect();
-}
-
 function buildPaletteItems() {
   const items = [
     {
@@ -654,47 +658,298 @@ function buildPaletteItems() {
   return items;
 }
 
+/**
+ * Navigate card selection in the board view.
+ * @param {'next' | 'prev'} direction
+ */
+function navigateCards(direction) {
+  if (!state.board) return;
+  const cardIds = Object.keys(state.board.cards);
+  if (cardIds.length === 0) return;
+  const currentIndex = state.selectedCardId ? cardIds.indexOf(state.selectedCardId) : -1;
+  let nextIndex;
+  if (direction === 'next') {
+    nextIndex = currentIndex < cardIds.length - 1 ? currentIndex + 1 : 0;
+  } else {
+    nextIndex = currentIndex > 0 ? currentIndex - 1 : cardIds.length - 1;
+  }
+  const nextId = cardIds[nextIndex];
+  if (nextId) {
+    void selectCard(nextId);
+    // Scroll selected card into view if on board
+    requestAnimationFrame(() => {
+      const selectedCard = document.querySelector(`[data-card-id="${CSS.escape(nextId)}"]`);
+      if (selectedCard instanceof HTMLElement) {
+        selectedCard.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        selectedCard.focus();
+      }
+    });
+  }
+}
+
+/**
+ * Dismiss all open overlays and toasts in priority order.
+ * Returns true if something was dismissed.
+ * @returns {boolean}
+ */
+function dismissOverlays() {
+  // Telemetry panel
+  const telPanel = document.getElementById('telemetryPanel');
+  if (telPanel) {
+    telPanel.remove();
+    return true;
+  }
+  // Toast container - dismiss newest toast
+  const toastContainer = document.getElementById('toastContainer');
+  if (toastContainer) {
+    const toasts = toastContainer.querySelectorAll('.toast:not(.toast-exit)');
+    if (toasts.length > 0) {
+      const lastToast = toasts[toasts.length - 1];
+      const closeBtn = lastToast.querySelector('.toast-close');
+      if (closeBtn instanceof HTMLElement) {
+        closeBtn.click();
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Announce a message to screen readers via the live region.
+ * @param {string} message
+ */
+function announceToScreenReader(message) {
+  const liveRegion = document.getElementById('a11yLiveRegion');
+  if (liveRegion) {
+    liveRegion.textContent = message;
+    // Clear after announcement is processed
+    window.setTimeout(() => {
+      liveRegion.textContent = '';
+    }, 1000);
+  }
+}
+
+const keyboardManager = createKeyboardManager({
+  getActiveView: () => state.activeView,
+});
+
 function registerGlobalShortcuts() {
-  document.addEventListener('keydown', (event) => {
-    const target = event.target;
-    const typing =
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement ||
-      (target instanceof HTMLElement && target.isContentEditable);
+  // --- Global shortcuts ---
 
-    if (!typing && event.key === '/') {
-      event.preventDefault();
-      dom.searchInput.focus();
-      return;
-    }
+  keyboardManager.register('/', 'Focus search input', () => {
+    dom.searchInput.focus();
+  });
 
-    if (typing) {
-      return;
-    }
+  keyboardManager.register('r', 'Refresh board data', () => {
+    void safeRefreshAll();
+    announceToScreenReader('Board refreshed');
+  });
 
-    if (event.key === 'r') {
-      void performAction('retry');
-    } else if (event.key === 'e') {
-      void performAction('escalate');
-    } else if (event.key === 'b') {
-      void performAction('block-toggle');
-    } else if (event.key === 'l') {
-      state.detailPanel = 'logs';
-      renderDetailView();
-      state.activeView = 'detail';
-      updateTopNav();
-    } else if (event.key === 's') {
-      state.detailPanel = 'spec';
-      renderDetailView();
-      state.activeView = 'detail';
-      updateTopNav();
-    } else if (event.key === 'p') {
-      const prLink = document.getElementById('prLink');
-      if (prLink instanceof HTMLAnchorElement) {
-        prLink.click();
+  keyboardManager.register('Shift+?', 'Show keyboard shortcuts', () => {
+    keyboardManager.showHelp();
+  });
+
+  keyboardManager.register('?', 'Show telemetry summary', () => {
+    showTelemetrySummary();
+  });
+
+  keyboardManager.register('Escape', 'Close overlay or dismiss toast', () => {
+    if (!dismissOverlays()) {
+      // If on detail view, go back to board
+      if (state.activeView === 'detail') {
+        state.activeView = 'board';
+        updateTopNav();
+        announceToScreenReader('Returned to board view');
       }
     }
   });
+
+  // --- View navigation with g+key sequences ---
+
+  keyboardManager.register('g b', 'Go to Board view', () => {
+    state.activeView = 'board';
+    updateTopNav();
+    dom.boardRegion.focus();
+    announceToScreenReader('Switched to Board view');
+  });
+
+  keyboardManager.register('g d', 'Go to Detail view', () => {
+    state.activeView = 'detail';
+    updateTopNav();
+    dom.cardRegion.focus();
+    announceToScreenReader('Switched to Detail view');
+  });
+
+  keyboardManager.register('g i', 'Go to Inspect view', () => {
+    state.activeView = 'inspect';
+    updateTopNav();
+    announceToScreenReader('Switched to Inspect view');
+  });
+
+  keyboardManager.register('g s', 'Go to Service view', () => {
+    state.activeView = 'service';
+    updateTopNav();
+    announceToScreenReader('Switched to Service view');
+  });
+
+  keyboardManager.register('g t', 'Go to Settings view', () => {
+    state.activeView = 'settings';
+    updateTopNav();
+    announceToScreenReader('Switched to Settings view');
+  });
+
+  // --- Numeric view switching ---
+
+  keyboardManager.register('1', 'Switch to Board view', () => {
+    state.activeView = 'board';
+    updateTopNav();
+    dom.boardRegion.focus();
+    announceToScreenReader('Switched to Board view');
+  });
+
+  keyboardManager.register('2', 'Switch to Detail view', () => {
+    state.activeView = 'detail';
+    updateTopNav();
+    dom.cardRegion.focus();
+    announceToScreenReader('Switched to Detail view');
+  });
+
+  keyboardManager.register('3', 'Switch to Inspect view', () => {
+    state.activeView = 'inspect';
+    updateTopNav();
+    announceToScreenReader('Switched to Inspect view');
+  });
+
+  keyboardManager.register('4', 'Switch to Service view', () => {
+    state.activeView = 'service';
+    updateTopNav();
+    announceToScreenReader('Switched to Service view');
+  });
+
+  keyboardManager.register('5', 'Switch to Settings view', () => {
+    state.activeView = 'settings';
+    updateTopNav();
+    announceToScreenReader('Switched to Settings view');
+  });
+
+  // --- Board-context shortcuts ---
+
+  keyboardManager.register('j', 'Select next card', (event) => {
+    navigateCards('next');
+  }, { context: 'board' });
+
+  keyboardManager.register('k', 'Select previous card', (event) => {
+    navigateCards('prev');
+  }, { context: 'board' });
+
+  keyboardManager.register('Enter', 'Open selected card in detail view', () => {
+    if (state.selectedCardId) {
+      void selectCard(state.selectedCardId, { switchToDetail: true });
+      announceToScreenReader('Opened card detail');
+    }
+  }, { context: 'board' });
+
+  keyboardManager.register('e', 'Escalate selected task', () => {
+    void performAction('escalate');
+  }, { context: 'board' });
+
+  keyboardManager.register('b', 'Block/unblock selected task', () => {
+    void performAction('block-toggle');
+  }, { context: 'board' });
+
+  // --- Detail-context shortcuts ---
+
+  keyboardManager.register('e', 'Escalate selected task', () => {
+    void performAction('escalate');
+  }, { context: 'detail' });
+
+  keyboardManager.register('b', 'Block/unblock selected task', () => {
+    void performAction('block-toggle');
+  }, { context: 'detail' });
+
+  keyboardManager.register('l', 'Switch to logs panel', () => {
+    state.detailPanel = 'logs';
+    renderDetailView();
+    announceToScreenReader('Showing logs panel');
+  }, { context: 'detail' });
+
+  keyboardManager.register('s', 'Switch to spec panel', () => {
+    state.detailPanel = 'spec';
+    renderDetailView();
+    announceToScreenReader('Showing spec panel');
+  }, { context: 'detail' });
+
+  keyboardManager.register('p', 'Open PR link', () => {
+    const prLink = document.getElementById('prLink');
+    if (prLink instanceof HTMLAnchorElement) {
+      prLink.click();
+    }
+  }, { context: 'detail' });
+
+  keyboardManager.register('j', 'Select next card', () => {
+    navigateCards('next');
+  }, { context: 'detail' });
+
+  keyboardManager.register('k', 'Select previous card', () => {
+    navigateCards('prev');
+  }, { context: 'detail' });
+
+  keyboardManager.attach();
+}
+
+/**
+ * Toggle an overlay panel displaying a live telemetry summary.
+ */
+function showTelemetrySummary() {
+  let panel = document.getElementById('telemetryPanel');
+  if (panel) {
+    panel.remove();
+    return;
+  }
+
+  const summary = telemetry.getTelemetrySummary();
+  const recentErrors = telemetry.getRecentErrors(10);
+
+  panel = document.createElement('div');
+  panel.id = 'telemetryPanel';
+  panel.className = 'telemetry-panel panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Telemetry summary');
+
+  const errorRows = recentErrors
+    .map(
+      (err) =>
+        `<tr><td>${escapeHtml(new Date(err.timestamp).toLocaleTimeString())}</td><td>${escapeHtml(err.source)}</td><td>${escapeHtml(err.message)}</td></tr>`,
+    )
+    .join('');
+
+  panel.innerHTML = `
+    <div class="telemetry-header">
+      <h3>Telemetry Summary</h3>
+      <button class="btn-ghost telemetry-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="telemetry-body">
+      <table class="telemetry-table">
+        <tr><th>SSE State</th><td>${escapeHtml(summary.sseHealth.state)}</td></tr>
+        <tr><th>Reconnects</th><td>${summary.sseHealth.reconnectCount}</td></tr>
+        <tr><th>Message Lag</th><td>${(summary.sseHealth.messageLagMs / 1000).toFixed(1)}s</td></tr>
+        <tr><th>Latency Avg</th><td>${summary.latency.avgMs}ms</td></tr>
+        <tr><th>Latency P95</th><td>${summary.latency.p95Ms}ms</td></tr>
+        <tr><th>Latency Max</th><td>${summary.latency.maxMs}ms</td></tr>
+        <tr><th>Render Avg</th><td>${summary.render.avgMs}ms</td></tr>
+        <tr><th>Render Max</th><td>${summary.render.maxMs}ms</td></tr>
+        <tr><th>Errors</th><td>${summary.errors.total} total, ${summary.errors.recent} recent</td></tr>
+      </table>
+      ${recentErrors.length > 0 ? `<h4>Recent Errors</h4><table class="telemetry-table"><thead><tr><th>Time</th><th>Source</th><th>Message</th></tr></thead><tbody>${errorRows}</tbody></table>` : ''}
+    </div>
+  `;
+
+  panel.querySelector('.telemetry-close')?.addEventListener('click', () => {
+    panel.remove();
+  });
+
+  document.body.appendChild(panel);
 }
 
 function registerHandlers() {
@@ -719,46 +974,42 @@ function registerHandlers() {
 
   dom.searchInput.addEventListener('input', () => {
     state.filters.search = dom.searchInput.value;
+    pushFilterState(state.filters);
     renderBoardView();
   });
 
   dom.repoFilter.addEventListener('change', () => {
     state.filters.repo = dom.repoFilter.value;
+    pushFilterState(state.filters);
     renderBoardView();
   });
 
   dom.ownerFilter.addEventListener('change', () => {
     state.filters.owner = dom.ownerFilter.value;
+    pushFilterState(state.filters);
     renderBoardView();
   });
 
   dom.laneFilter.addEventListener('change', () => {
     state.filters.lane = dom.laneFilter.value;
+    pushFilterState(state.filters);
     renderBoardView();
   });
 
   dom.sortBy.addEventListener('change', () => {
     state.filters.sort = dom.sortBy.value || 'updated_desc';
+    pushFilterState(state.filters);
     renderBoardView();
   });
 
-  dom.savedViews.addEventListener('change', () => {
-    if (dom.savedViews.value) {
-      applySavedView(dom.savedViews.value);
-    }
-  });
-
-  dom.saveCurrentView.addEventListener('click', () => {
-    saveCurrentView();
-  });
-
   dom.clearFilters.addEventListener('click', () => {
-    state.filters = { search: '', repo: '', owner: '', lane: '', sort: 'updated_desc' };
+    state.filters = getDefaultFilters();
     dom.searchInput.value = '';
     dom.repoFilter.value = '';
     dom.ownerFilter.value = '';
     dom.laneFilter.value = '';
     dom.sortBy.value = 'updated_desc';
+    pushFilterState(state.filters);
     renderBoardView();
   });
 
@@ -944,6 +1195,45 @@ function registerHandlers() {
   });
 }
 
+const savedViewsPanel = createSavedViewsPanel({
+  container: dom.savedViewsContainer,
+  getFilters: () => ({ ...state.filters }),
+  onApply: (filters) => {
+    state.filters = { ...filters };
+    dom.searchInput.value = state.filters.search;
+    dom.repoFilter.value = state.filters.repo;
+    dom.ownerFilter.value = state.filters.owner;
+    dom.laneFilter.value = state.filters.lane;
+    dom.sortBy.value = state.filters.sort;
+    renderBoardView();
+  },
+  onReset: () => {
+    state.filters = getDefaultFilters();
+    dom.searchInput.value = '';
+    dom.repoFilter.value = '';
+    dom.ownerFilter.value = '';
+    dom.laneFilter.value = '';
+    dom.sortBy.value = 'updated_desc';
+    pushFilterState(state.filters);
+    renderBoardView();
+  },
+});
+
+window.addEventListener('popstate', (event) => {
+  const restored = event.state?.filters;
+  if (restored) {
+    state.filters = { ...restored };
+  } else {
+    state.filters = readFilterState();
+  }
+  dom.searchInput.value = state.filters.search;
+  dom.repoFilter.value = state.filters.repo;
+  dom.ownerFilter.value = state.filters.owner;
+  dom.laneFilter.value = state.filters.lane;
+  dom.sortBy.value = state.filters.sort;
+  renderBoardView();
+});
+
 const palette = createCommandPalette(dom, {
   getItems: () => buildPaletteItems(),
 });
@@ -959,11 +1249,23 @@ async function bootstrap() {
   toggleIncidentMode(state.incidentMode);
   updateTopNav();
   updateDetailTabs();
-  updateSavedViewsSelect();
+  savedViewsPanel.render();
   refreshInspectDropdowns(dom, state);
   registerHandlers();
   registerGlobalShortcuts();
   connectStream();
+
+  // Attach health indicator to board panel header
+  const headActions = document.querySelector('#view-board .head-actions');
+  if (headActions) {
+    healthIndicator = createHealthIndicator({
+      container: headActions,
+      getTelemetry: () => telemetry.getTelemetrySummary(),
+    });
+    healthUpdateTimer = window.setInterval(() => {
+      healthIndicator?.update();
+    }, 5000);
+  }
 
   try {
     await Promise.all([loadAuth(), safeRefreshAll(), refreshServicePanel(), loadReposForIntake()]);
@@ -989,3 +1291,9 @@ async function bootstrap() {
 }
 
 void bootstrap();
+
+// Track unhandled promise rejections for telemetry
+window.addEventListener('unhandledrejection', (event) => {
+  const message = event.reason instanceof Error ? event.reason.message : String(event.reason);
+  telemetry.recordError('unhandledrejection', message);
+});

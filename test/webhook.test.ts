@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildServer } from '../src/api/server.js';
+import { AutonomyManager } from '../src/lib/autonomy.js';
 import { createLogger } from '../src/lib/logger.js';
 
 const config = {
@@ -25,6 +26,7 @@ const config = {
   requiredChecks: [],
   otelEnabled: false,
   dryRun: true,
+  autonomyMode: 'pr_only' as const,
   corsAllowedOrigins: [],
   uiUnifiedConsole: true,
   uiRuntimeApiBase: undefined,
@@ -109,6 +111,7 @@ describe('github webhook route', () => {
       github: githubStub,
       orchestrator: { enqueue },
       runtimeSupervisor: runtimeSupervisorStub,
+      autonomyManager: new AutonomyManager('pr_only'),
       logger: createLogger('silent'),
     });
 
@@ -148,6 +151,7 @@ describe('github webhook route', () => {
       github: githubStub,
       orchestrator: { enqueue: vi.fn() },
       runtimeSupervisor: runtimeSupervisorStub,
+      autonomyManager: new AutonomyManager('pr_only'),
       logger: createLogger('silent'),
     });
 
@@ -187,6 +191,7 @@ describe('github webhook route', () => {
       github: githubStub,
       orchestrator: { enqueue },
       runtimeSupervisor: runtimeSupervisorStub,
+      autonomyManager: new AutonomyManager('pr_only'),
       logger: createLogger('silent'),
     });
 

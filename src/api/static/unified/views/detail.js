@@ -1,4 +1,5 @@
 import { escapeHtml, formatDate, statusPillClass } from '../lib/format.js';
+import { renderAgentControl } from '../components/agent-control.js';
 
 function groupedTimeline(events) {
   const groups = new Map();
@@ -19,11 +20,19 @@ export function renderDetail(dom, state, callbacks) {
     dom.detailMeta.innerHTML = '';
     dom.detailLinks.innerHTML = '';
     dom.detailBody.innerHTML = '<div class="pill">No detail loaded.</div>';
+    if (dom.agentControlRegion) {
+      dom.agentControlRegion.innerHTML = '';
+    }
     return;
   }
 
   const card = detail.card;
   dom.detailTitle.textContent = card.title;
+
+  // Update aria-label on the detail region for screen readers
+  if (dom.cardRegion) {
+    dom.cardRegion.setAttribute('aria-label', `Task detail: ${card.title}`);
+  }
   dom.detailMeta.innerHTML = `
     <span class="pill">${escapeHtml(card.card_id)}</span>
     <span class="pill">${escapeHtml(card.lane)}</span>
@@ -41,6 +50,14 @@ export function renderDetail(dom, state, callbacks) {
     links.push(`<a class="pill" id="prLink" target="_blank" rel="noreferrer" href="${escapeHtml(card.links.pull_request_url)}">PR</a>`);
   }
   dom.detailLinks.innerHTML = links.join('');
+
+  if (dom.agentControlRegion) {
+    renderAgentControl(dom.agentControlRegion, {
+      me: state.me,
+      detail: state.detail,
+      onAction: callbacks.onAgentAction,
+    });
+  }
 
   dom.detailBody.innerHTML = renderPanelBody(detail, state.detailPanel);
 

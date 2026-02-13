@@ -6,6 +6,11 @@ import type { Logger } from 'pino';
 import type { AppConfig } from '../config.js';
 import type { PullRequestChecksSnapshot, RepoRef } from '../integrations/github/client.js';
 import {
+  AutonomyModeSchema,
+  AutonomyTransitionError,
+  type AutonomyManager,
+} from '../lib/autonomy.js';
+import {
   extractIssueNumber,
   isActionableEvent,
   mapGithubWebhookToEnvelope,
@@ -176,6 +181,7 @@ export type AppServices = {
     enqueue: (item: { eventId: string; envelope: WebhookEventEnvelope }) => void;
   };
   runtimeSupervisor: RuntimeSupervisorContract;
+  autonomyManager: AutonomyManager;
   logger: Logger;
 };
 
@@ -1352,6 +1358,82 @@ export function buildServer(services: AppServices) {
     });
 
     return response;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Autonomy mode routes
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/v1/autonomy/status', async () => {
+    return {
+      mode: services.autonomyManager.mode,
+      history: services.autonomyManager.history,
+      generated_at: new Date().toISOString(),
+    };
+  });
+
+  app.post('/api/v1/autonomy/mode', async (request, reply) => {
+    const auth = getAuthContext(request.headers);
+    if (!auth.authenticated) {
+      return reply.status(401).send({ error: 'authentication_required' });
+    }
+    if (!auth.roles.has('admin')) {
+      return reply.status(403).send({
+        error: 'forbidden',
+        required_roles: ['admin'],
+      });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = parseJsonBody(request.body);
+    } catch {
+      return reply.status(400).send({ error: 'invalid_json' });
+    }
+
+    const modeResult = AutonomyModeSchema.safeParse(body.mode);
+    if (!modeResult.success) {
+      return reply.status(400).send({
+        error: 'invalid_mode',
+        valid_modes: AutonomyModeSchema.options,
+      });
+    }
+
+    const reason = typeof body.reason === 'string' && body.reason.trim().length > 0
+      ? body.reason.trim()
+      : undefined;
+    if (!reason) {
+      return reply.status(400).send({ error: 'reason_required' });
+    }
+
+    try {
+      const record = services.autonomyManager.transition({
+        to: modeResult.data,
+        changedBy: auth.userId,
+        reason,
+      });
+
+      services.logger.info(
+        { autonomy_transition: record },
+        'autonomy mode changed',
+      );
+
+      return {
+        mode: services.autonomyManager.mode,
+        transition: record,
+        occurred_at: record.changedAt,
+      };
+    } catch (err) {
+      if (err instanceof AutonomyTransitionError) {
+        return reply.status(409).send({
+          error: 'invalid_transition',
+          from: err.from,
+          to: err.to,
+          message: err.message,
+        });
+      }
+      throw err;
+    }
   });
 
   app.get('/api/v1/stream', async (request, reply) => {

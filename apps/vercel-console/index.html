@@ -14,8 +14,11 @@
     <script src="./app-config.js"></script>
   </head>
   <body>
-    <main class="shell">
-      <header class="topbar panel">
+    <a href="#view-board" class="skip-link">Skip to main content</a>
+    <div id="a11yLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+    <div id="boardLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+    <main class="shell" role="main">
+      <header class="topbar panel" role="banner">
         <div class="brand">
           <p class="kicker">Ralph Loop</p>
           <h1>World-Class Orchestrator Console</h1>
@@ -50,19 +53,18 @@
             <button id="refreshBoard" class="btn-primary" type="button">Refresh</button>
           </div>
         </div>
-        <div class="board-toolbar">
-          <input id="searchInput" type="search" placeholder="Search tasks, tags, owners" />
-          <select id="repoFilter"><option value="">All repos</option></select>
-          <select id="ownerFilter"><option value="">All owners</option></select>
-          <select id="laneFilter"><option value="">All lanes</option></select>
-          <select id="sortBy">
+        <div class="board-toolbar" role="search" aria-label="Board filters">
+          <input id="searchInput" type="search" placeholder="Search tasks, tags, owners" aria-label="Search tasks" />
+          <select id="repoFilter" aria-label="Filter by repository"><option value="">All repos</option></select>
+          <select id="ownerFilter" aria-label="Filter by owner"><option value="">All owners</option></select>
+          <select id="laneFilter" aria-label="Filter by lane"><option value="">All lanes</option></select>
+          <select id="sortBy" aria-label="Sort order">
             <option value="updated_desc">Sort: Recently Updated</option>
             <option value="repo_asc">Sort: Repo A-Z</option>
             <option value="repo_desc">Sort: Repo Z-A</option>
             <option value="title_asc">Sort: Title A-Z</option>
           </select>
-          <select id="savedViews"><option value="">Saved views</option></select>
-          <button id="saveCurrentView" class="btn-ghost" type="button">Save View</button>
+          <div id="savedViewsContainer"></div>
           <button id="clearFilters" class="btn-ghost" type="button">Clear</button>
         </div>
         <div class="board-aux">
@@ -80,7 +82,7 @@
             </div>
           </article>
         </div>
-        <div class="board-wrap" id="boardRegion" tabindex="-1">
+        <div class="board-wrap" id="boardRegion" tabindex="-1" role="region" aria-label="Kanban board lanes">
           <div id="lanes" class="lanes" role="list"></div>
         </div>
       </section>
@@ -92,16 +94,11 @@
             <button id="openInBoard" class="btn-ghost" type="button">Show On Board</button>
           </div>
         </div>
-        <div class="detail-main" id="cardRegion" tabindex="-1">
+        <div class="detail-main" id="cardRegion" tabindex="-1" role="region" aria-label="Task detail">
           <h3 id="detailTitle">Select a card</h3>
           <div id="detailMeta" class="pill-row"></div>
           <div id="detailLinks" class="pill-row"></div>
-          <div class="action-grid">
-            <button data-action="retry" class="btn-ghost" type="button">Re-run Task</button>
-            <button data-action="reassign" class="btn-ghost" type="button">Reassign</button>
-            <button data-action="escalate" class="btn-ghost" type="button">Escalate</button>
-            <button data-action="block-toggle" class="btn-ghost" type="button">Block / Unblock</button>
-          </div>
+          <div id="agentControlRegion"></div>
         </div>
         <div class="tabs" role="tablist" aria-label="Detail panels">
           <button class="detail-tab" data-panel="timeline" aria-pressed="true" type="button">Timeline</button>

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AutonomyModeSchema, type AutonomyMode } from './lib/autonomy.js';
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -43,6 +44,7 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value ?? 'true').toLowerCase() === 'true'),
   UI_RUNTIME_API_BASE: z.string().optional().default(''),
+  AUTONOMY_MODE: AutonomyModeSchema.default('pr_only'),
   RALPH_PLANNER_PRD_PATH: z.string().optional(),
   RALPH_PLANNER_MAX_ITERATIONS: z.coerce.number().int().positive().default(10),
   RALPH_TEAM_MAX_ITERATIONS: z.coerce.number().int().positive().default(20),
@@ -77,6 +79,7 @@ export type AppConfig = {
   requiredChecks: string[];
   otelEnabled: boolean;
   dryRun: boolean;
+  autonomyMode: AutonomyMode;
   corsAllowedOrigins: string[];
   uiUnifiedConsole: boolean;
   uiRuntimeApiBase?: string;
@@ -144,6 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .filter((v) => v.length > 0),
     otelEnabled: parsed.OTEL_ENABLED,
     dryRun,
+    autonomyMode: parsed.AUTONOMY_MODE,
     corsAllowedOrigins: parsed.CORS_ALLOWED_ORIGINS.split(',')
       .map((v) => v.trim())
       .filter((v) => v.length > 0),

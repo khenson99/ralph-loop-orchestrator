@@ -5,6 +5,7 @@ import { buildServer } from './api/server.js';
 import { ClaudeAdapter } from './integrations/anthropic/claude.js';
 import { GitHubClient } from './integrations/github/client.js';
 import { CodexAdapter } from './integrations/openai/codex.js';
+import { AutonomyManager } from './lib/autonomy.js';
 import { createLogger } from './lib/logger.js';
 import { startTelemetry, stopTelemetry } from './lib/telemetry.js';
 import { OrchestratorService } from './orchestrator/service.js';
@@ -35,6 +36,8 @@ async function main() {
 
   const orchestrator = new OrchestratorService(repo, github, codex, claude, config, logger);
 
+  const autonomyManager = new AutonomyManager(config.autonomyMode);
+
   const server = buildServer({
     config,
     dbClient,
@@ -42,6 +45,7 @@ async function main() {
     github,
     orchestrator,
     runtimeSupervisor,
+    autonomyManager,
     logger,
   });
 
